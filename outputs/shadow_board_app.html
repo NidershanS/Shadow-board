@@ -1250,9 +1250,8 @@
       for (const item of state.items) {
         const tool = getTool(item.toolId);
         if (!tool) continue;
-        const cutPoints = combinedLocalPoints(item);
         ctx.beginPath();
-        cutPoints.forEach((p, i) => {
+        tool.points.forEach((p, i) => {
           const s = toScreen(transformPoint(p, item));
           if (i === 0) ctx.moveTo(s.x, s.y);
           else ctx.lineTo(s.x, s.y);
@@ -1295,8 +1294,8 @@
 
     function hitTest(world) {
       for (let i = state.items.length - 1; i >= 0; i--) {
-        const item = state.items[i];
-        const pts = combinedLocalPoints(item).map(p => transformPoint(p, item));
+        const item = state.items[i], tool = getTool(item.toolId);
+        const pts = tool.points.map(p => transformPoint(p, item));
         if (pointInPolygon(world, pts)) return item;
       }
       return null;
@@ -1497,7 +1496,6 @@
     [el.offsetInput, el.spacingInput, el.smoothInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();
-        drawLayout();
       });
     });
 

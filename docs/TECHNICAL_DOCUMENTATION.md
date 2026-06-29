@@ -66,23 +66,20 @@ The contour is resampled and smoothed with Gaussian smoothing plus a Chaikin pas
 
 Each layout item starts with two finger-pull handles. They are shown as blue circles while the item is selected.
 
-Important export behavior:
+Important behavior:
 
 - The circles are not exported as separate DXF circles.
-- The app unions the tool contour and finger-pull circles into one raster mask.
-- That combined mask is retraced into one continuous `LWPOLYLINE`.
-- The red outline shown on the drawer is the actual single contour that will be exported.
+- The drawer canvas draws the tool outline and pull circles separately so editing stays fast.
+- On export, the app unions the tool contour and finger-pull circles into one raster mask.
+- That combined mask is retraced into one continuous `LWPOLYLINE` for the DXF.
 
 For clean results, each pull handle should overlap the tool contour. If a pull circle is moved far away from the tool, the union may become disconnected and the tracer will keep the largest closed contour.
 
 ## Performance Notes
 
-Combining finger-pull handles into a single contour is more expensive than drawing separate circles. The app uses two optimizations:
+Combining finger-pull handles into a single contour is more expensive than drawing separate circles. The app therefore keeps the live canvas simple and only performs the union when exporting.
 
-- Combined contours are cached per layout item.
-- Dragging a whole tool only redraws the canvas; it does not rebuild side panels or recompute the local contour.
-
-The combined contour is recalculated only when:
+The app also uses caching so repeated exports do not redo unchanged work. The combined contour is recalculated only when:
 
 - A finger-pull handle moves.
 - Offset, smoothing, or point spacing changes.
