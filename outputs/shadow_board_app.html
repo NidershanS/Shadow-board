@@ -936,7 +936,27 @@
       return chaikin(smoothed, 1);
     }
 
+    function combinedContourKey(item) {
+      const pulls = itemPulls(item).map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.r.toFixed(2)}`).join(";");
+      return [
+        item.toolId,
+        pulls,
+        Number(el.offsetInput.value).toFixed(2),
+        Number(el.spacingInput.value).toFixed(2),
+        Number(el.smoothInput.value).toFixed(2)
+      ].join("|");
+    }
+
+    function invalidateContourCache(item = null) {
+      const items = item ? [item] : state.items;
+      items.forEach(i => { i._combinedContour = null; });
+    }
+
     function combinedLocalPoints(item) {
+      const cacheKey = combinedContourKey(item);
+      if (item._combinedContour && item._combinedContour.key === cacheKey) {
+        return item._combinedContour.points;
+      }
       const tool = getTool(item.toolId);
       const pulls = itemPulls(item);
       const all = tool.points.slice();
@@ -972,7 +992,9 @@
 
       let outline = traceMask(mask, w, h);
       outline = smoothContour(outline, Number(el.spacingInput.value), Number(el.smoothInput.value));
-      return outline.map(p => ({ x: x0 + p.x / PROC_PX_PER_MM, y: y0 + p.y / PROC_PX_PER_MM }));
+      const points = outline.map(p => ({ x: x0 + p.x / PROC_PX_PER_MM, y: y0 + p.y / PROC_PX_PER_MM }));
+      item._combinedContour = { key: cacheKey, points };
+      return points;
     }
 
     function normalizeMm(pointsPx) {
@@ -1431,15 +1453,20 @@
           const pulls = itemPulls(item);
           pulls[state.drag.pullIndex].x = local.x;
           pulls[state.drag.pullIndex].y = local.y;
+          invalidateContourCache(item);
         } else {
           item.x = world.x - state.drag.dx;
           item.y = world.y - state.drag.dy;
         }
-        renderAll();
+        drawLayout();
       }
     });
 
-    window.addEventListener("pointerup", () => { state.drag = null; });
+    window.addEventListener("pointerup", () => {
+      if (!state.drag) return;
+      state.drag = null;
+      renderAll();
+    });
     window.addEventListener("resize", fitView);
     el.drawerW.addEventListener("input", fitView);
     el.drawerH.addEventListener("input", fitView);
@@ -1464,7 +1491,14 @@
       const item = getSelectedItem();
       if (!item) return;
       item.rot = Number(el.rotInput.value) || 0;
-      renderAll();
+      drawLayout();
+    });
+
+    [el.offsetInput, el.spacingInput, el.smoothInput].forEach(input => {
+      input.addEventListener("input", () => {
+        invalidateContourCache();
+        drawLayout();
+      });
     });
 
     function rotateSelected(delta) {
