@@ -1,0 +1,8 @@
+work/
+outputs/*.png
+outputs/*.svg
+outputs/*.dxf
+outputs/*.jpeg
+outputs/*.jpg
+!outputs/shadow_board_app.html
+!outputs/shadow_board_from_a4.py

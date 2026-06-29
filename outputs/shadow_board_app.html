@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shadow Board DXF Maker</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7f8;
+      --panel: #ffffff;
+      --line: #d6dde2;
+      --text: #172026;
+      --muted: #62727f;
+      --accent: #c81818;
+      --accent-dark: #a71111;
+      --ink: #1c252c;
+      --foam: #eef3f5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    button, input, select {
+      font: inherit;
+    }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+    }
+    aside {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px;
+      overflow-y: auto;
+    }
+    main {
+      min-width: 0;
+      padding: 16px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin: 18px 0 8px;
+      font-size: 15px;
+    }
+    label {
+      display: grid;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    input[type="number"], input[type="text"], select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 9px;
+      color: var(--text);
+      background: #fff;
+    }
+    input[type="file"] {
+      width: 100%;
+      border: 1px dashed #a8b5bd;
+      border-radius: 6px;
+      padding: 12px;
+      background: #fbfcfd;
+    }
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .controls {
+      display: grid;
+      gap: 10px;
+    }
+    .btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      min-height: 36px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    button.primary {
+      color: #fff;
+      border-color: var(--accent-dark);
+      background: var(--accent);
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .status {
+      min-height: 20px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(110px, 1fr));
+      gap: 10px;
+      align-items: end;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .stage {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 12px;
+    }
+    .canvasWrap {
+      min-width: 0;
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      display: grid;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 560px;
+      border-radius: 4px;
+      background: var(--foam);
+    }
+    .inspector {
+      min-width: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      overflow-y: auto;
+    }
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 8px;
+      display: grid;
+      grid-template-columns: 70px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      background: #fff;
+      cursor: pointer;
+    }
+    .item.active {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .thumb {
+      width: 70px;
+      height: 86px;
+      object-fit: contain;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #f8fafb;
+    }
+    .item strong {
+      display: block;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    .itemActions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .itemActions.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .itemActions button {
+      min-height: 30px;
+      padding: 5px 6px;
+      font-size: 12px;
+    }
+    button.danger {
+      color: #fff;
+      border-color: #941313;
+      background: #b51b1b;
+    }
+    .selectedTools {
+      display: grid;
+      gap: 8px;
+    }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 20;
+      max-width: min(420px, calc(100vw - 36px));
+      border-radius: 8px;
+      border: 1px solid #91b89a;
+      background: #eef9f0;
+      color: #12351b;
+      box-shadow: 0 12px 34px rgba(23, 32, 38, 0.16);
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(15, 21, 25, 0.54);
+    }
+    .modalPanel {
+      width: min(920px, 96vw);
+      max-height: 94vh;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      overflow: hidden;
+    }
+    .modalTop {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+    }
+    .modalTop strong {
+      overflow-wrap: anywhere;
+    }
+    .modalBody {
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      background: #f4f7f9;
+    }
+    .modalBody img {
+      max-width: 100%;
+      max-height: 78vh;
+      object-fit: contain;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .hidden { display: none; }
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .toolbar { grid-template-columns: 1fr 1fr; }
+      .stage { grid-template-columns: 1fr; }
+      canvas { min-height: 480px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <h1>Shadow Board DXF Maker</h1>
+      <div class="controls">
+        <label>
+          Upload A3/A4 tool photos
+          <input id="fileInput" type="file" accept="image/*" multiple>
+        </label>
+        <label>
+          Paper size
+          <select id="paperSize">
+            <option value="a4" selected>A4 - 210 x 297 mm</option>
+            <option value="a3">A3 - 297 x 420 mm</option>
+          </select>
+        </label>
+        <div class="grid2">
+          <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
+          <label>Metal repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
+        </div>
+        <div class="grid2">
+          <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
+          <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
+        </div>
+        <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
+        <button id="processBtn" class="primary">Process Images</button>
+        <div id="status" class="status">Upload uncropped photos with the tool placed on the selected paper size.</div>
+      </div>
+
+      <h2>Detected Tools</h2>
+      <div id="toolList"></div>
+    </aside>
+
+    <main>
+      <section class="toolbar">
+        <label>Drawer width mm<input id="drawerW" type="number" value="560" min="50" step="1"></label>
+        <label>Drawer height mm<input id="drawerH" type="number" value="390" min="50" step="1"></label>
+        <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
+        <button id="downloadLayout" class="primary">Export Drawer DXF</button>
+        <button id="fitView">Fit View</button>
+      </section>
+
+      <section class="stage">
+        <div class="canvasWrap">
+          <canvas id="layoutCanvas"></canvas>
+        </div>
+        <div class="inspector">
+          <h2>Arrange</h2>
+          <div class="status">Drag shapes on the drawer. Select a tool to rotate it, then drag the blue pull circles.</div>
+          <div class="btns">
+            <button id="rotateLeft">Rotate -15</button>
+            <button id="rotateRight">Rotate +15</button>
+          </div>
+          <div class="btns">
+            <button id="downloadSelected">Export Tool DXF</button>
+            <button id="duplicateSelected">Duplicate</button>
+          </div>
+          <h2>Layout Items</h2>
+          <div id="layoutItems" class="selectedTools"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="previewModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modalPanel">
+      <div class="modalTop">
+        <strong id="previewTitle">Detected tool preview</strong>
+        <button id="closePreview">Close</button>
+      </div>
+      <div class="modalBody">
+        <img id="previewImage" alt="Detected tool contour preview">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PAPER_SIZES = {
+      a4: { label: "A4", w: 210, h: 297 },
+      a3: { label: "A3", w: 297, h: 420 }
+    };
+    const PROC_PX_PER_MM = 5;
+    const state = {
+      files: [],
+      tools: [],
+      items: [],
+      selectedId: null,
+      scale: 1,
+      viewX: 20,
+      viewY: 20,
+      drag: null
+    };
+
+    const el = {
+      fileInput: document.getElementById("fileInput"),
+      processBtn: document.getElementById("processBtn"),
+      status: document.getElementById("status"),
+      toolList: document.getElementById("toolList"),
+      layoutItems: document.getElementById("layoutItems"),
+      canvas: document.getElementById("layoutCanvas"),
+      drawerW: document.getElementById("drawerW"),
+      drawerH: document.getElementById("drawerH"),
+      offsetInput: document.getElementById("offsetInput"),
+      fingerInput: document.getElementById("fingerInput"),
+      smoothInput: document.getElementById("smoothInput"),
+      spacingInput: document.getElementById("spacingInput"),
+      metalRepairInput: document.getElementById("metalRepairInput"),
+      paperSize: document.getElementById("paperSize"),
+      rotInput: document.getElementById("rotInput"),
+      downloadLayout: document.getElementById("downloadLayout"),
+      downloadSelected: document.getElementById("downloadSelected"),
+      duplicateSelected: document.getElementById("duplicateSelected"),
+      rotateLeft: document.getElementById("rotateLeft"),
+      rotateRight: document.getElementById("rotateRight"),
+      fitView: document.getElementById("fitView"),
+      toast: document.getElementById("toast"),
+      previewModal: document.getElementById("previewModal"),
+      previewTitle: document.getElementById("previewTitle"),
+      previewImage: document.getElementById("previewImage"),
+      closePreview: document.getElementById("closePreview")
+    };
+    const ctx = el.canvas.getContext("2d");
+
+    function setStatus(text) {
+      el.status.textContent = text;
+    }
+
+    function showNotice(text) {
+      setStatus(text);
+      el.toast.textContent = text;
+      el.toast.classList.remove("hidden");
+      clearTimeout(showNotice.timer);
+      showNotice.timer = setTimeout(() => el.toast.classList.add("hidden"), 3600);
+    }
+
+    function showPreview(tool) {
+      if (!tool) return;
+      el.previewTitle.textContent = `${tool.name} - ${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm`;
+      el.previewImage.src = tool.previewLarge || tool.preview;
+      el.previewModal.classList.remove("hidden");
+    }
+
+    function hidePreview() {
+      el.previewModal.classList.add("hidden");
+      el.previewImage.removeAttribute("src");
+    }
+
+    function loadImage(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    function drawImageToCanvas(img, maxSide) {
+      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      return c;
+    }
+
+    function imageData(canvas) {
+      return canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+    }
+
+    function largestComponent(mask, w, h, minArea = 1) {
+      const seen = new Uint8Array(w * h);
+      let best = [];
+      const q = [];
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i] || seen[i]) continue;
+        q.length = 0;
+        const pts = [];
+        q.push(i);
+        seen[i] = 1;
+        while (q.length) {
+          const idx = q.pop();
+          pts.push(idx);
+          const x = idx % w;
+          const y = Math.floor(idx / w);
+          const ns = [];
+          if (x > 0) ns.push(idx - 1);
+          if (x < w - 1) ns.push(idx + 1);
+          if (y > 0) ns.push(idx - w);
+          if (y < h - 1) ns.push(idx + w);
+          for (const ni of ns) {
+            if (mask[ni] && !seen[ni]) {
+              seen[ni] = 1;
+              q.push(ni);
+            }
+          }
+        }
+        if (pts.length > best.length) best = pts;
+      }
+      const out = new Uint8Array(w * h);
+      if (best.length >= minArea) {
+        for (const p of best) out[p] = 1;
+      }
+      return out;
+    }
+
+    function bboxFromMask(mask, w, h, pad = 0) {
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        const x = i % w;
+        const y = Math.floor(i / w);
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+      if (x1 < x0 || y1 < y0) throw new Error("Could not detect the paper sheet.");
+      return {
+        x0: Math.max(0, x0 - pad),
+        y0: Math.max(0, y0 - pad),
+        x1: Math.min(w, x1 + 1 + pad),
+        y1: Math.min(h, y1 + 1 + pad)
+      };
+    }
+
+    function detectA4Crop(img) {
+      const selectedPaper = PAPER_SIZES[el.paperSize.value] || PAPER_SIZES.a4;
+      const small = drawImageToCanvas(img, 1200);
+      const data = imageData(small);
+      const w = small.width, h = small.height;
+      const mask = new Uint8Array(w * h);
+      for (let i = 0, p = 0; i < data.data.length; i += 4, p++) {
+        const r = data.data[i], g = data.data[i + 1], b = data.data[i + 2];
+        const bright = (r + g + b) / 3;
+        const range = Math.max(r, g, b) - Math.min(r, g, b);
+        if (bright > 120 && range < 85) mask[p] = 1;
+      }
+      const paperMask = largestComponent(mask, w, h, 2000);
+      const box = bboxFromMask(paperMask, w, h, 6);
+      const sx = img.naturalWidth / w;
+      const sy = img.naturalHeight / h;
+      const paperW = (box.x1 - box.x0) * sx;
+      const paperH = (box.y1 - box.y0) * sy;
+      const landscape = paperW > paperH;
+      const out = document.createElement("canvas");
+      out.width = Math.round((landscape ? selectedPaper.h : selectedPaper.w) * PROC_PX_PER_MM);
+      out.height = Math.round((landscape ? selectedPaper.w : selectedPaper.h) * PROC_PX_PER_MM);
+      out.dataset.orientation = landscape ? "landscape" : "portrait";
+      out.dataset.paperSize = selectedPaper.label;
+      out.getContext("2d").drawImage(
+        img,
+        box.x0 * sx,
+        box.y0 * sy,
+        paperW,
+        paperH,
+        0,
+        0,
+        out.width,
+        out.height
+      );
+      return out;
+    }
+
+    function dilate(mask, w, h, radius) {
+      let cur = mask;
+      for (let r = 0; r < radius; r++) {
+        const out = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let on = 0;
+            for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1) && !on; yy++) {
+              for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) {
+                if (cur[yy * w + xx]) { on = 1; break; }
+              }
+            }
+            out[y * w + x] = on;
+          }
+        }
+        cur = out;
+      }
+      return cur;
+    }
+
+    function erode(mask, w, h, radius) {
+      let cur = mask;
+      for (let r = 0; r < radius; r++) {
+        const out = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let on = 1;
+            for (let yy = y - 1; yy <= y + 1 && on; yy++) {
+              for (let xx = x - 1; xx <= x + 1; xx++) {
+                if (xx < 0 || yy < 0 || xx >= w || yy >= h || !cur[yy * w + xx]) {
+                  on = 0;
+                  break;
+                }
+              }
+            }
+            out[y * w + x] = on;
+          }
+        }
+        cur = out;
+      }
+      return cur;
+    }
+
+    function fillInteriorHoles(mask, w, h) {
+      const seen = new Uint8Array(w * h);
+      const q = [];
+      function push(idx) {
+        if (!mask[idx] && !seen[idx]) {
+          seen[idx] = 1;
+          q.push(idx);
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        push(x);
+        push((h - 1) * w + x);
+      }
+      for (let y = 0; y < h; y++) {
+        push(y * w);
+        push(y * w + w - 1);
+      }
+      while (q.length) {
+        const idx = q.pop();
+        const x = idx % w;
+        const y = Math.floor(idx / w);
+        if (x > 0) push(idx - 1);
+        if (x < w - 1) push(idx + 1);
+        if (y > 0) push(idx - w);
+        if (y < h - 1) push(idx + w);
+      }
+      const out = new Uint8Array(mask);
+      for (let i = 0; i < out.length; i++) {
+        if (!mask[i] && !seen[i]) out[i] = 1;
+      }
+      return out;
+    }
+
+    function boxDilate(mask, w, h, radius) {
+      radius = Math.max(0, Math.round(radius));
+      if (radius === 0) return new Uint8Array(mask);
+      const tmp = new Uint8Array(w * h);
+      const out = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) {
+        let sum = 0;
+        for (let x = 0; x < w; x++) {
+          sum += mask[y * w + x];
+          if (x > radius * 2) sum -= mask[y * w + x - radius * 2 - 1];
+          if (x >= radius) tmp[y * w + x - radius] = sum > 0 ? 1 : 0;
+        }
+        for (let x = Math.max(0, w - radius); x < w; x++) {
+          let any = 0;
+          for (let xx = Math.max(0, x - radius); xx <= Math.min(w - 1, x + radius); xx++) {
+            if (mask[y * w + xx]) { any = 1; break; }
+          }
+          tmp[y * w + x] = any;
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        for (let y = 0; y < h; y++) {
+          sum += tmp[y * w + x];
+          if (y > radius * 2) sum -= tmp[(y - radius * 2 - 1) * w + x];
+          if (y >= radius) out[(y - radius) * w + x] = sum > 0 ? 1 : 0;
+        }
+        for (let y = Math.max(0, h - radius); y < h; y++) {
+          let any = 0;
+          for (let yy = Math.max(0, y - radius); yy <= Math.min(h - 1, y + radius); yy++) {
+            if (tmp[yy * w + x]) { any = 1; break; }
+          }
+          out[y * w + x] = any;
+        }
+      }
+      return out;
+    }
+
+    function boxErode(mask, w, h, radius) {
+      radius = Math.max(0, Math.round(radius));
+      if (radius === 0) return new Uint8Array(mask);
+      const inverted = new Uint8Array(mask.length);
+      for (let i = 0; i < mask.length; i++) inverted[i] = mask[i] ? 0 : 1;
+      const dilatedBackground = boxDilate(inverted, w, h, radius);
+      const out = new Uint8Array(mask.length);
+      for (let i = 0; i < mask.length; i++) out[i] = dilatedBackground[i] ? 0 : 1;
+      return out;
+    }
+
+    function boxBlurFloat(src, w, h, radius) {
+      radius = Math.max(1, Math.round(radius));
+      const tmp = new Float32Array(w * h);
+      const out = new Float32Array(w * h);
+      for (let y = 0; y < h; y++) {
+        let sum = 0;
+        for (let x = -radius; x <= radius; x++) {
+          sum += src[y * w + Math.min(w - 1, Math.max(0, x))];
+        }
+        for (let x = 0; x < w; x++) {
+          tmp[y * w + x] = sum / (radius * 2 + 1);
+          const removeX = Math.max(0, x - radius);
+          const addX = Math.min(w - 1, x + radius + 1);
+          sum += src[y * w + addX] - src[y * w + removeX];
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        for (let y = -radius; y <= radius; y++) {
+          sum += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+        }
+        for (let y = 0; y < h; y++) {
+          out[y * w + x] = sum / (radius * 2 + 1);
+          const removeY = Math.max(0, y - radius);
+          const addY = Math.min(h - 1, y + radius + 1);
+          sum += tmp[addY * w + x] - tmp[removeY * w + x];
+        }
+      }
+      return out;
+    }
+
+    function makeToolMask(pageCanvas, metalRepairMm = 7) {
+      const data = imageData(pageCanvas);
+      const w = pageCanvas.width, h = pageCanvas.height;
+      const mask = new Uint8Array(w * h);
+      const bright = new Float32Array(w * h);
+      const satArr = new Float32Array(w * h);
+      for (let i = 0, p = 0; i < data.data.length; i += 4, p++) {
+        const r = data.data[i], g = data.data[i + 1], b = data.data[i + 2];
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        bright[p] = (r + g + b) / 3;
+        satArr[p] = mx - mn;
+      }
+      const localBg = boxBlurFloat(bright, w, h, Math.round(18 * PROC_PX_PER_MM));
+      for (let p = 0; p < bright.length; p++) {
+        let edge = 0;
+        if (p % w > 0) edge = Math.max(edge, Math.abs(bright[p] - bright[p - 1]));
+        if (p >= w) edge = Math.max(edge, Math.abs(bright[p] - bright[p - w]));
+        const localDrop = localBg[p] - bright[p];
+        const colorful = satArr[p] > 34;
+        const trueDark = bright[p] < 112;
+        const hardEdge = edge > 24 && bright[p] < 235;
+        const localObject = localDrop > 28 && edge > 9 && bright[p] < 230;
+        if (colorful || trueDark || hardEdge || localObject) mask[p] = 1;
+      }
+      const border = Math.round(12 * PROC_PX_PER_MM);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (x < border || y < border || x >= w - border || y >= h - border) mask[y * w + x] = 0;
+        }
+      }
+      let clean = dilate(mask, w, h, 5);
+      clean = erode(clean, w, h, 3);
+      clean = largestComponent(clean, w, h, Math.round(120 * PROC_PX_PER_MM * PROC_PX_PER_MM));
+      const metalBridge = Math.round(Math.max(0, metalRepairMm) * PROC_PX_PER_MM);
+      if (metalBridge > 0) {
+        clean = boxDilate(clean, w, h, metalBridge);
+        clean = fillInteriorHoles(clean, w, h);
+        clean = boxErode(clean, w, h, metalBridge);
+      }
+      clean = dilate(clean, w, h, 2);
+      clean = fillInteriorHoles(clean, w, h);
+      clean = erode(clean, w, h, 2);
+      return { mask: clean, w, h };
+    }
+
+    function addFingerPull(mask, w, h, radiusMm) {
+      if (radiusMm <= 0) return mask;
+      const out = new Uint8Array(mask);
+      const b = bboxFromMask(mask, w, h, 0);
+      const radius = Math.round(radiusMm * PROC_PX_PER_MM);
+      const overlap = Math.round(radius * 0.45);
+      let cx = b.x1 + radius - overlap;
+      let cy = Math.round(b.y0 + (b.y1 - b.y0) * 0.72);
+      if (cx + radius > w - Math.round(5 * PROC_PX_PER_MM)) cx = b.x0 - radius + overlap;
+      if (cx - radius < Math.round(5 * PROC_PX_PER_MM)) {
+        cx = Math.round((b.x0 + b.x1) / 2);
+        cy = Math.min(h - radius - 1, b.y1 + radius - overlap);
+      }
+      const r2 = radius * radius;
+      for (let y = Math.max(0, cy - radius); y <= Math.min(h - 1, cy + radius); y++) {
+        for (let x = Math.max(0, cx - radius); x <= Math.min(w - 1, cx + radius); x++) {
+          const dx = x - cx, dy = y - cy;
+          if (dx * dx + dy * dy <= r2) out[y * w + x] = 1;
+        }
+      }
+      return out;
+    }
+
+    const SEGMENTS = {
+      1: [["L", "T"]], 2: [["T", "R"]], 3: [["L", "R"]], 4: [["R", "B"]],
+      5: [["T", "R"], ["L", "B"]], 6: [["T", "B"]], 7: [["L", "B"]],
+      8: [["B", "L"]], 9: [["T", "B"]], 10: [["L", "T"], ["R", "B"]],
+      11: [["R", "B"]], 12: [["L", "R"]], 13: [["T", "R"]], 14: [["L", "T"]]
+    };
+
+    function edgePoint(x, y, edge) {
+      if (edge === "T") return [2 * x + 1, 2 * y];
+      if (edge === "R") return [2 * x + 2, 2 * y + 1];
+      if (edge === "B") return [2 * x + 1, 2 * y + 2];
+      return [2 * x, 2 * y + 1];
+    }
+
+    function polygonArea(points) {
+      let area = 0;
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+        area += a.x * b.y - b.x * a.y;
+      }
+      return Math.abs(area) / 2;
+    }
+
+    function traceMask(mask, w, h) {
+      const pw = w + 2, ph = h + 2;
+      const padded = new Uint8Array(pw * ph);
+      for (let y = 0; y < h; y++) {
+        padded.set(mask.subarray(y * w, y * w + w), (y + 1) * pw + 1);
+      }
+      const graph = new Map();
+      function key(p) { return p[0] + "," + p[1]; }
+      function add(a, b) {
+        const ka = key(a), kb = key(b);
+        if (!graph.has(ka)) graph.set(ka, []);
+        if (!graph.has(kb)) graph.set(kb, []);
+        graph.get(ka).push(kb);
+        graph.get(kb).push(ka);
+      }
+      for (let y = 0; y < ph - 1; y++) {
+        for (let x = 0; x < pw - 1; x++) {
+          const tl = padded[y * pw + x], tr = padded[y * pw + x + 1];
+          const br = padded[(y + 1) * pw + x + 1], bl = padded[(y + 1) * pw + x];
+          const idx = tl | (tr << 1) | (br << 2) | (bl << 3);
+          const segs = SEGMENTS[idx] || [];
+          for (const [a, b] of segs) add(edgePoint(x - 1, y - 1, a), edgePoint(x - 1, y - 1, b));
+        }
+      }
+      const used = new Set();
+      let best = [];
+      for (const [start, nbrs] of graph) {
+        for (const nxt of nbrs) {
+          const e0 = [start, nxt].sort().join("|");
+          if (used.has(e0)) continue;
+          const path = [start];
+          let prev = start, cur = nxt;
+          for (let guard = 0; guard < 20000; guard++) {
+            used.add([prev, cur].sort().join("|"));
+            path.push(cur);
+            const candidates = (graph.get(cur) || []).filter(p => p !== prev);
+            if (!candidates.length) break;
+            const unused = candidates.find(p => !used.has([cur, p].sort().join("|")));
+            const next = unused || candidates[0];
+            prev = cur;
+            cur = next;
+            if (cur === start) {
+              path.push(cur);
+              break;
+            }
+          }
+          if (path.length > 8) {
+            const pts = path.map(s => {
+              const [x, y] = s.split(",").map(Number);
+              return { x: x / 2, y: y / 2 };
+            });
+            if (polygonArea(pts) > polygonArea(best)) best = pts;
+          }
+        }
+      }
+      if (!best.length) throw new Error("Could not trace contour.");
+      return best;
+    }
+
+    function dist(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function resampleClosed(points, spacingPx) {
+      const pts = points[0] && points[points.length - 1] && points[0].x === points[points.length - 1].x && points[0].y === points[points.length - 1].y
+        ? points.slice(0, -1)
+        : points.slice();
+      let perimeter = 0;
+      const edges = pts.map((p, i) => {
+        const q = pts[(i + 1) % pts.length];
+        const len = dist(p, q);
+        perimeter += len;
+        return { p, q, len };
+      });
+      const count = Math.max(16, Math.round(perimeter / Math.max(1, spacingPx)));
+      const out = [];
+      let ei = 0, start = 0;
+      for (let k = 0; k < count; k++) {
+        const target = k * perimeter / count;
+        while (ei < edges.length - 1 && start + edges[ei].len < target) {
+          start += edges[ei].len;
+          ei++;
+        }
+        const e = edges[ei];
+        const t = e.len ? (target - start) / e.len : 0;
+        out.push({ x: e.p.x + (e.q.x - e.p.x) * t, y: e.p.y + (e.q.y - e.p.y) * t });
+      }
+      out.push({ ...out[0] });
+      return out;
+    }
+
+    function gaussianSmooth(points, sigmaPx, spacingPx) {
+      const pts = points.slice(0, -1);
+      if (pts.length < 5 || sigmaPx <= 0) return points;
+      const sigmaSamples = Math.max(0.1, sigmaPx / Math.max(1, spacingPx));
+      const radius = Math.max(2, Math.ceil(sigmaSamples * 3));
+      const weights = [];
+      let total = 0;
+      for (let i = -radius; i <= radius; i++) {
+        const v = Math.exp(-(i * i) / (2 * sigmaSamples * sigmaSamples));
+        weights.push(v);
+        total += v;
+      }
+      const out = [];
+      for (let i = 0; i < pts.length; i++) {
+        let x = 0, y = 0;
+        for (let j = -radius; j <= radius; j++) {
+          const p = pts[(i + j + pts.length) % pts.length];
+          const weight = weights[j + radius] / total;
+          x += p.x * weight;
+          y += p.y * weight;
+        }
+        out.push({ x, y });
+      }
+      out.push({ ...out[0] });
+      return out;
+    }
+
+    function chaikin(points, iterations) {
+      let pts = points.slice(0, -1);
+      for (let k = 0; k < iterations; k++) {
+        const out = [];
+        for (let i = 0; i < pts.length; i++) {
+          const p = pts[i], q = pts[(i + 1) % pts.length];
+          out.push({ x: 0.75 * p.x + 0.25 * q.x, y: 0.75 * p.y + 0.25 * q.y });
+          out.push({ x: 0.25 * p.x + 0.75 * q.x, y: 0.25 * p.y + 0.75 * q.y });
+        }
+        pts = out;
+      }
+      pts.push({ ...pts[0] });
+      return pts;
+    }
+
+    function smoothContour(points, spacingMm, sigmaMm) {
+      const spacingPx = spacingMm * PROC_PX_PER_MM;
+      const resampled = resampleClosed(points, spacingPx);
+      const smoothed = gaussianSmooth(resampled, sigmaMm * PROC_PX_PER_MM, spacingPx);
+      return chaikin(smoothed, 1);
+    }
+
+    function combinedLocalPoints(item) {
+      const tool = getTool(item.toolId);
+      const pulls = itemPulls(item);
+      const all = tool.points.slice();
+      pulls.forEach(p => {
+        all.push({ x: p.x - p.r, y: p.y - p.r }, { x: p.x + p.r, y: p.y + p.r });
+      });
+      const b = bboxPoints(all);
+      const pad = Math.max(6, Number(el.offsetInput.value) + Math.max(0, ...pulls.map(p => p.r * 0.1)));
+      const x0 = b.x0 - pad;
+      const y0 = b.y0 - pad;
+      const w = Math.max(16, Math.ceil((b.x1 - b.x0 + pad * 2) * PROC_PX_PER_MM));
+      const h = Math.max(16, Math.ceil((b.y1 - b.y0 + pad * 2) * PROC_PX_PER_MM));
+      const mask = new Uint8Array(w * h);
+
+      for (let py = 0; py < h; py++) {
+        const y = y0 + (py + 0.5) / PROC_PX_PER_MM;
+        for (let px = 0; px < w; px++) {
+          const x = x0 + (px + 0.5) / PROC_PX_PER_MM;
+          let inside = pointInPolygon({ x, y }, tool.points);
+          if (!inside) {
+            for (const pull of pulls) {
+              const dx = x - pull.x;
+              const dy = y - pull.y;
+              if (dx * dx + dy * dy <= pull.r * pull.r) {
+                inside = true;
+                break;
+              }
+            }
+          }
+          if (inside) mask[py * w + px] = 1;
+        }
+      }
+
+      let outline = traceMask(mask, w, h);
+      outline = smoothContour(outline, Number(el.spacingInput.value), Number(el.smoothInput.value));
+      return outline.map(p => ({ x: x0 + p.x / PROC_PX_PER_MM, y: y0 + p.y / PROC_PX_PER_MM }));
+    }
+
+    function normalizeMm(pointsPx) {
+      const pts = pointsPx.map(p => ({ x: p.x / PROC_PX_PER_MM, y: p.y / PROC_PX_PER_MM }));
+      const b = bboxPoints(pts);
+      const shifted = pts.map(p => ({ x: p.x - b.x0, y: p.y - b.y0 }));
+      return { points: shifted, width: b.x1 - b.x0, height: b.y1 - b.y0 };
+    }
+
+    function bboxPoints(points) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of points) {
+        x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+      }
+      return { x0, y0, x1, y1 };
+    }
+
+    function previewCanvas(page, pointsPx, maxW = 170, maxH = 220) {
+      const c = document.createElement("canvas");
+      c.width = maxW;
+      c.height = maxH;
+      const g = c.getContext("2d");
+      g.fillStyle = "#f7f9fa";
+      g.fillRect(0, 0, c.width, c.height);
+      const scale = Math.min(c.width / page.width, c.height / page.height);
+      const ox = (c.width - page.width * scale) / 2;
+      const oy = (c.height - page.height * scale) / 2;
+      g.drawImage(page, ox, oy, page.width * scale, page.height * scale);
+      g.strokeStyle = "#d00000";
+      g.lineWidth = 2;
+      g.beginPath();
+      pointsPx.forEach((p, i) => {
+        const x = ox + p.x * scale, y = oy + p.y * scale;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      });
+      g.closePath();
+      g.stroke();
+      return c.toDataURL("image/png");
+    }
+
+    async function processFile(file, index) {
+      const img = await loadImage(file);
+      const page = detectA4Crop(img);
+      const { mask, w, h } = makeToolMask(page, Number(el.metalRepairInput.value));
+      const offsetPx = Math.round(Number(el.offsetInput.value) * PROC_PX_PER_MM);
+      let cut = dilate(mask, w, h, offsetPx);
+      let contour = traceMask(cut, w, h);
+      contour = smoothContour(contour, Number(el.spacingInput.value), Number(el.smoothInput.value));
+      const norm = normalizeMm(contour);
+      const tool = {
+        id: "tool-" + Date.now() + "-" + index,
+        name: file.name.replace(/\.[^.]+$/, ""),
+        points: norm.points,
+        width: norm.width,
+        height: norm.height,
+        defaultPulls: defaultFingerPulls(norm.width, norm.height, Number(el.fingerInput.value)),
+        preview: previewCanvas(page, contour, 170, 220),
+        previewLarge: previewCanvas(page, contour, 760, 980)
+      };
+      return tool;
+    }
+
+    function defaultFingerPulls(width, height, radius) {
+      if (radius <= 0) return [];
+      return [
+        { x: width + radius * 0.55, y: height * 0.70, r: radius },
+        { x: -radius * 0.55, y: height * 0.70, r: radius }
+      ];
+    }
+
+    function clonePulls(pulls) {
+      return (pulls || []).map(p => ({ x: p.x, y: p.y, r: p.r }));
+    }
+
+    function addToolToLayout(tool) {
+      const item = {
+        id: "item-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+        toolId: tool.id,
+        x: 20 + state.items.length * 12,
+        y: 20 + state.items.length * 12,
+        rot: 0,
+        pulls: clonePulls(tool.defaultPulls)
+      };
+      state.items.push(item);
+      state.selectedId = item.id;
+      renderAll();
+    }
+
+    function getSelectedItem() {
+      return state.items.find(i => i.id === state.selectedId) || null;
+    }
+
+    function getTool(id) {
+      return state.tools.find(t => t.id === id);
+    }
+
+    function renderToolList() {
+      el.toolList.innerHTML = "";
+      state.tools.forEach(tool => {
+        const d = document.createElement("div");
+        d.className = "item";
+        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm</span><div class="itemActions"><button data-action="preview">Preview</button><button data-action="add">Add</button><button class="danger" data-action="delete">Delete</button></div></div>`;
+        d.querySelector('[data-action="add"]').addEventListener("click", ev => {
+          ev.stopPropagation();
+          addToolToLayout(tool);
+          showNotice(`${tool.name} added to drawer.`);
+        });
+        d.querySelector('[data-action="preview"]').addEventListener("click", ev => {
+          ev.stopPropagation();
+          showPreview(tool);
+        });
+        d.querySelector('[data-action="delete"]').addEventListener("click", ev => {
+          ev.stopPropagation();
+          deleteTool(tool.id);
+        });
+        d.addEventListener("click", () => showPreview(tool));
+        d.addEventListener("dblclick", () => addToolToLayout(tool));
+        el.toolList.appendChild(d);
+      });
+    }
+
+    function renderLayoutItems() {
+      el.layoutItems.innerHTML = "";
+      state.items.forEach(item => {
+        const tool = getTool(item.toolId);
+        if (!tool) return;
+        const d = document.createElement("div");
+        d.className = "item" + (item.id === state.selectedId ? " active" : "");
+        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>X ${item.x.toFixed(0)} / Y ${item.y.toFixed(0)} / R ${item.rot.toFixed(0)}</span><div class="itemActions two"><button data-action="preview">Preview</button><button class="danger" data-action="delete">Delete</button></div></div>`;
+        d.addEventListener("click", () => {
+          state.selectedId = item.id;
+          el.rotInput.value = item.rot.toFixed(0);
+          renderAll();
+        });
+        d.querySelector('[data-action="preview"]').addEventListener("click", ev => {
+          ev.stopPropagation();
+          showPreview(tool);
+        });
+        d.querySelector('[data-action="delete"]').addEventListener("click", ev => {
+          ev.stopPropagation();
+          deleteLayoutItem(item.id);
+        });
+        el.layoutItems.appendChild(d);
+      });
+    }
+
+    function deleteTool(toolId) {
+      const tool = getTool(toolId);
+      state.tools = state.tools.filter(t => t.id !== toolId);
+      state.items = state.items.filter(i => i.toolId !== toolId);
+      if (state.selectedId && !state.items.some(i => i.id === state.selectedId)) {
+        state.selectedId = state.items[0]?.id || null;
+      }
+      renderAll();
+      showNotice(`${tool ? tool.name : "Tool"} deleted.`);
+    }
+
+    function deleteLayoutItem(itemId) {
+      const item = state.items.find(i => i.id === itemId);
+      const tool = item ? getTool(item.toolId) : null;
+      state.items = state.items.filter(i => i.id !== itemId);
+      if (state.selectedId === itemId) state.selectedId = state.items[0]?.id || null;
+      renderAll();
+      showNotice(`${tool ? tool.name : "Layout item"} removed from drawer.`);
+    }
+
+    function resizeCanvas() {
+      const rect = el.canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(500, Math.round(rect.width * dpr));
+      const h = Math.max(420, Math.round(rect.height * dpr));
+      if (el.canvas.width !== w || el.canvas.height !== h) {
+        el.canvas.width = w;
+        el.canvas.height = h;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function fitView() {
+      resizeCanvas();
+      const rect = el.canvas.getBoundingClientRect();
+      const dw = Number(el.drawerW.value);
+      const dh = Number(el.drawerH.value);
+      state.scale = Math.min((rect.width - 44) / dw, (rect.height - 44) / dh);
+      state.viewX = (rect.width - dw * state.scale) / 2;
+      state.viewY = (rect.height - dh * state.scale) / 2;
+      drawLayout();
+    }
+
+    function toScreen(p) {
+      return { x: state.viewX + p.x * state.scale, y: state.viewY + p.y * state.scale };
+    }
+
+    function toWorld(x, y) {
+      return { x: (x - state.viewX) / state.scale, y: (y - state.viewY) / state.scale };
+    }
+
+    function transformPoint(p, item) {
+      const tool = getTool(item.toolId);
+      const cx = tool.width / 2, cy = tool.height / 2;
+      const rad = item.rot * Math.PI / 180;
+      const dx = p.x - cx, dy = p.y - cy;
+      return {
+        x: item.x + cx + dx * Math.cos(rad) - dy * Math.sin(rad),
+        y: item.y + cy + dx * Math.sin(rad) + dy * Math.cos(rad)
+      };
+    }
+
+    function localPointFromWorld(p, item) {
+      const tool = getTool(item.toolId);
+      const cx = tool.width / 2, cy = tool.height / 2;
+      const rad = -item.rot * Math.PI / 180;
+      const dx = p.x - item.x - cx;
+      const dy = p.y - item.y - cy;
+      return {
+        x: cx + dx * Math.cos(rad) - dy * Math.sin(rad),
+        y: cy + dx * Math.sin(rad) + dy * Math.cos(rad)
+      };
+    }
+
+    function itemPulls(item) {
+      const tool = getTool(item.toolId);
+      if (!item.pulls) item.pulls = clonePulls(tool.defaultPulls);
+      return item.pulls;
+    }
+
+    function drawLayout() {
+      resizeCanvas();
+      const rect = el.canvas.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const dw = Number(el.drawerW.value), dh = Number(el.drawerH.value);
+      const topLeft = toScreen({ x: 0, y: 0 });
+      ctx.fillStyle = "#eef3f5";
+      ctx.fillRect(0, 0, rect.width, rect.height);
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "#1c252c";
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(topLeft.x, topLeft.y, dw * state.scale, dh * state.scale);
+      ctx.strokeRect(topLeft.x, topLeft.y, dw * state.scale, dh * state.scale);
+      ctx.strokeStyle = "#d6dde2";
+      ctx.lineWidth = 1;
+      const grid = 50;
+      for (let x = grid; x < dw; x += grid) {
+        const a = toScreen({ x, y: 0 }), b = toScreen({ x, y: dh });
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (let y = grid; y < dh; y += grid) {
+        const a = toScreen({ x: 0, y }), b = toScreen({ x: dw, y });
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (const item of state.items) {
+        const tool = getTool(item.toolId);
+        if (!tool) continue;
+        const cutPoints = combinedLocalPoints(item);
+        ctx.beginPath();
+        cutPoints.forEach((p, i) => {
+          const s = toScreen(transformPoint(p, item));
+          if (i === 0) ctx.moveTo(s.x, s.y);
+          else ctx.lineTo(s.x, s.y);
+        });
+        ctx.closePath();
+        ctx.fillStyle = item.id === state.selectedId ? "rgba(200,24,24,0.10)" : "rgba(28,37,44,0.06)";
+        ctx.strokeStyle = item.id === state.selectedId ? "#c81818" : "#222";
+        ctx.lineWidth = item.id === state.selectedId ? 2 : 1.4;
+        ctx.fill();
+        ctx.stroke();
+        const pulls = itemPulls(item);
+        for (let pullIndex = 0; pullIndex < pulls.length; pullIndex++) {
+          const pull = pulls[pullIndex];
+          const c = toScreen(transformPoint(pull, item));
+          const r = Math.max(2, pull.r * state.scale);
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = item.id === state.selectedId ? "rgba(21, 96, 189, 0.10)" : "rgba(200, 24, 24, 0.04)";
+          ctx.strokeStyle = item.id === state.selectedId ? "#1560bd" : "#c81818";
+          ctx.lineWidth = item.id === state.selectedId ? 2 : 1.2;
+          ctx.fill();
+          ctx.stroke();
+          if (item.id === state.selectedId) {
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = "#1560bd";
+            ctx.fill();
+          }
+        }
+      }
+    }
+
+    function renderAll() {
+      renderToolList();
+      renderLayoutItems();
+      drawLayout();
+      const sel = getSelectedItem();
+      el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
+    }
+
+    function hitTest(world) {
+      for (let i = state.items.length - 1; i >= 0; i--) {
+        const item = state.items[i];
+        const pts = combinedLocalPoints(item).map(p => transformPoint(p, item));
+        if (pointInPolygon(world, pts)) return item;
+      }
+      return null;
+    }
+
+    function hitTestPull(world) {
+      const item = getSelectedItem();
+      if (!item) return null;
+      const pulls = itemPulls(item);
+      for (let i = pulls.length - 1; i >= 0; i--) {
+        const c = transformPoint(pulls[i], item);
+        if (dist(world, c) <= Math.max(8 / state.scale, pulls[i].r + 4)) {
+          return { item, pullIndex: i };
+        }
+      }
+      return null;
+    }
+
+    function pointInPolygon(p, pts) {
+      let inside = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j];
+        const intersect = ((a.y > p.y) !== (b.y > p.y)) && (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y + 1e-9) + a.x);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
+    }
+
+    function download(name, text) {
+      const blob = new Blob([text], { type: "application/dxf" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function dxfPolyline(points, layer) {
+      const lines = ["0", "LWPOLYLINE", "8", layer, "90", String(points.length - 1), "70", "1"];
+      for (const p of points.slice(0, -1)) {
+        lines.push("10", p.x.toFixed(3), "20", p.y.toFixed(3));
+      }
+      return lines;
+    }
+
+    function makeDxf(entities, drawer = null) {
+      const lines = ["0", "SECTION", "2", "ENTITIES"];
+      if (drawer) {
+        lines.push(...dxfPolyline([
+          { x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h },
+          { x: 0, y: drawer.h }, { x: 0, y: 0 }
+        ], "DRAWER"));
+      }
+      for (const ent of entities) {
+        lines.push(...dxfPolyline(ent.points, ent.layer));
+      }
+      lines.push("0", "ENDSEC", "0", "EOF", "");
+      return lines.join("\n");
+    }
+
+    function exportLayout() {
+      if (!state.items.length) {
+        showNotice("No layout items to export. Add at least one detected tool first.");
+        return;
+      }
+      const ents = [];
+      state.items.forEach((item, idx) => {
+        const tool = getTool(item.toolId);
+        const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0, 40);
+        ents.push({
+          layer,
+          points: combinedLocalPoints(item).map(p => transformPoint(p, item))
+        });
+      });
+      const dxf = makeDxf(ents, { w: Number(el.drawerW.value), h: Number(el.drawerH.value) });
+      download("shadow_board_layout.dxf", dxf);
+      showNotice(`Success: exported drawer DXF with ${state.items.length} single-contour cutout(s).`);
+    }
+
+    function exportSelected() {
+      const item = getSelectedItem();
+      if (!item) {
+        showNotice("Select a layout item before exporting one tool DXF.");
+        return;
+      }
+      const tool = getTool(item.toolId);
+      const ents = [{ layer: "CUT", points: combinedLocalPoints(item) }];
+      const dxf = makeDxf(ents);
+      download(tool.name.replace(/[^A-Za-z0-9_-]/g, "_") + ".dxf", dxf);
+      showNotice(`Success: exported ${tool.name} as one contour DXF.`);
+    }
+
+    el.fileInput.addEventListener("change", () => {
+      state.files = Array.from(el.fileInput.files || []);
+      setStatus(`${state.files.length} image(s) ready.`);
+    });
+
+    el.processBtn.addEventListener("click", async () => {
+      if (!state.files.length) {
+        setStatus("Choose one or more images first.");
+        return;
+      }
+      el.processBtn.disabled = true;
+      try {
+        for (let i = 0; i < state.files.length; i++) {
+          setStatus(`Processing ${i + 1} of ${state.files.length}: ${state.files[i].name}`);
+          const tool = await processFile(state.files[i], i);
+          state.tools.push(tool);
+          addToolToLayout(tool);
+        }
+        setStatus("Done. Drag tools in the drawer and export DXF.");
+      } catch (err) {
+        console.error(err);
+        setStatus("Could not process image: " + err.message);
+      } finally {
+        el.processBtn.disabled = false;
+        renderAll();
+      }
+    });
+
+    el.canvas.addEventListener("pointerdown", ev => {
+      const rect = el.canvas.getBoundingClientRect();
+      const world = toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+      const pullHit = hitTestPull(world);
+      if (pullHit) {
+        state.selectedId = pullHit.item.id;
+        state.drag = { mode: "pull", id: pullHit.item.id, pullIndex: pullHit.pullIndex };
+        renderAll();
+        return;
+      }
+      const hit = hitTest(world);
+      if (hit) {
+        state.selectedId = hit.id;
+        state.drag = { mode: "item", id: hit.id, dx: world.x - hit.x, dy: world.y - hit.y };
+      } else {
+        state.selectedId = null;
+        state.drag = null;
+      }
+      renderAll();
+    });
+
+    window.addEventListener("pointermove", ev => {
+      if (!state.drag) return;
+      const rect = el.canvas.getBoundingClientRect();
+      const world = toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+      const item = state.items.find(i => i.id === state.drag.id);
+      if (item) {
+        if (state.drag.mode === "pull") {
+          const local = localPointFromWorld(world, item);
+          const pulls = itemPulls(item);
+          pulls[state.drag.pullIndex].x = local.x;
+          pulls[state.drag.pullIndex].y = local.y;
+        } else {
+          item.x = world.x - state.drag.dx;
+          item.y = world.y - state.drag.dy;
+        }
+        renderAll();
+      }
+    });
+
+    window.addEventListener("pointerup", () => { state.drag = null; });
+    window.addEventListener("resize", fitView);
+    el.drawerW.addEventListener("input", fitView);
+    el.drawerH.addEventListener("input", fitView);
+    el.fitView.addEventListener("click", fitView);
+    el.downloadLayout.addEventListener("click", exportLayout);
+    el.downloadSelected.addEventListener("click", exportSelected);
+    el.duplicateSelected.addEventListener("click", () => {
+      const item = getSelectedItem();
+      if (!item) {
+        showNotice("Select a layout item before duplicating.");
+        return;
+      }
+      const copy = { ...item, id: "item-" + Date.now(), x: item.x + 15, y: item.y + 15, pulls: clonePulls(itemPulls(item)) };
+      state.items.push(copy);
+      state.selectedId = copy.id;
+      renderAll();
+      showNotice("Selected item duplicated.");
+    });
+    el.rotateLeft.addEventListener("click", () => rotateSelected(-15));
+    el.rotateRight.addEventListener("click", () => rotateSelected(15));
+    el.rotInput.addEventListener("input", () => {
+      const item = getSelectedItem();
+      if (!item) return;
+      item.rot = Number(el.rotInput.value) || 0;
+      renderAll();
+    });
+
+    function rotateSelected(delta) {
+      const item = getSelectedItem();
+      if (!item) {
+        showNotice("Select a layout item before rotating.");
+        return;
+      }
+      item.rot = (item.rot + delta) % 360;
+      renderAll();
+    }
+
+    el.closePreview.addEventListener("click", hidePreview);
+    el.previewModal.addEventListener("click", ev => {
+      if (ev.target === el.previewModal) hidePreview();
+    });
+    window.addEventListener("keydown", ev => {
+      if (ev.key === "Escape" && !el.previewModal.classList.contains("hidden")) hidePreview();
+    });
+
+    fitView();
+  </script>
+</body>
+</html>
