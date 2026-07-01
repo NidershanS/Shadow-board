@@ -315,6 +315,7 @@
           <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
         </div>
         <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
+        <label>Project name<input id="projectName" type="text" value="shadow_board" placeholder="Project name"></label>
         <button id="processBtn" class="primary">Process Images</button>
         <div class="btns">
           <button id="saveProject" class="secondary">Save Project</button>
@@ -411,6 +412,7 @@
       spacingInput: document.getElementById("spacingInput"),
       metalRepairInput: document.getElementById("metalRepairInput"),
       paperSize: document.getElementById("paperSize"),
+      projectName: document.getElementById("projectName"),
       saveProject: document.getElementById("saveProject"),
       loadProject: document.getElementById("loadProject"),
       newProject: document.getElementById("newProject"),
@@ -445,11 +447,21 @@
       showNotice.timer = setTimeout(() => el.toast.classList.add("hidden"), 3600);
     }
 
+    function cleanProjectName() {
+      const name = (el.projectName.value || "").trim();
+      return name || "shadow_board";
+    }
+
+    function safeFileBase(name) {
+      return (name || "shadow_board").trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "shadow_board";
+    }
+
     function serializeProject(options = {}) {
       const includeLargePreviews = options.includeLargePreviews !== false;
       return {
         app: "Shadow Board DXF Maker",
         version: 1,
+        name: cleanProjectName(),
         savedAt: new Date().toISOString(),
         settings: {
           paperSize: el.paperSize.value,
@@ -488,6 +500,7 @@
         throw new Error("This is not a valid Shadow Board project file.");
       }
       const settings = project.settings || {};
+      el.projectName.value = project.name || settings.projectName || "shadow_board";
       el.paperSize.value = settings.paperSize || "a4";
       el.drawerW.value = settings.drawerW || 560;
       el.drawerH.value = settings.drawerH || 390;
@@ -526,7 +539,7 @@
     function saveProject(auto = false) {
       try {
         localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(serializeProject({ includeLargePreviews: false })));
-        if (!auto) showNotice("Project saved in this browser.");
+        if (!auto) showNotice(`Project "${cleanProjectName()}" saved in this browser.`);
         return true;
       } catch (err) {
         showNotice("Could not save project. Try Export Project instead.");
@@ -550,7 +563,7 @@
       }
       try {
         applyProject(JSON.parse(raw));
-        showNotice("Saved project loaded.");
+        showNotice(`Saved project "${cleanProjectName()}" loaded.`);
       } catch (err) {
         showNotice("Could not load saved project: " + err.message);
       }
@@ -567,14 +580,16 @@
       state.selectedId = null;
       state.drag = null;
       el.fileInput.value = "";
+      el.projectName.value = "shadow_board";
       fitView();
       renderAll();
       showNotice("New project started. Browser-saved project cleared.");
     }
 
     function exportProjectFile() {
-      download("shadow_board_project.json", JSON.stringify(serializeProject({ includeLargePreviews: true }), null, 2), "application/json");
-      showNotice("Project JSON exported.");
+      const name = safeFileBase(cleanProjectName());
+      download(`${name}_project.json`, JSON.stringify(serializeProject({ includeLargePreviews: true }), null, 2), "application/json");
+      showNotice(`Project "${cleanProjectName()}" JSON exported.`);
     }
 
     function importProjectFile(file) {
@@ -583,7 +598,7 @@
         try {
           applyProject(JSON.parse(String(reader.result || "")));
           saveProject(true);
-          showNotice("Project imported and saved in this browser.");
+          showNotice(`Project "${cleanProjectName()}" imported and saved in this browser.`);
         } catch (err) {
           showNotice("Could not import project: " + err.message);
         }
@@ -1692,7 +1707,7 @@
         });
       });
       const dxf = makeDxf(ents, { w: Number(el.drawerW.value), h: Number(el.drawerH.value) });
-      download("shadow_board_layout.dxf", dxf);
+      download(`${safeFileBase(cleanProjectName())}_layout.dxf`, dxf);
       showNotice(`Success: exported drawer DXF with ${state.items.length} single-contour cutout(s).`);
     }
 
@@ -1718,6 +1733,7 @@
     el.loadProject.addEventListener("click", loadSavedProject);
     el.newProject.addEventListener("click", newProject);
     el.exportProject.addEventListener("click", exportProjectFile);
+    el.projectName.addEventListener("input", scheduleAutosave);
     el.importProject.addEventListener("click", () => el.importProjectInput.click());
     el.importProjectInput.addEventListener("change", () => {
       const file = el.importProjectInput.files && el.importProjectInput.files[0];

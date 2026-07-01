@@ -29,6 +29,7 @@ The app stores the latest project in browser `localStorage` so a refresh can res
 
 Manual project controls:
 
+- `Project name`: stores a human-friendly project name and controls exported project/DXF filenames.
 - `Save Project`: writes the current project to this browser.
 - `Load Saved`: reloads the browser-saved project.
 - `New Project / Clear Saved`: removes the browser-saved project and resets the current workspace.

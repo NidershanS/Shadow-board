@@ -10,6 +10,8 @@ The finger-pull handles are exported as part of one continuous cut contour.
 
 Projects auto-save in the browser. Use **Export Project** to save a portable `.json` project file and **Import Project** to reopen it on another PC.
 
+Set **Project name** before saving/exporting to control project names and downloaded filenames.
+
 Use **New Project / Clear Saved** to reset the browser-saved project and start fresh. Export a project JSON first if you want to keep a backup.
 
 Use **Auto Arrange All** after bulk import to lay out all detected tools inside the drawer automatically. The first version uses row packing with 0/90 degree rotation trials; manual cleanup is still available by dragging and rotating tools.
