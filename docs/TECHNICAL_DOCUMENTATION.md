@@ -6,7 +6,7 @@ Shadow Board DXF Maker converts photos of tools placed on A3 or A4 paper into la
 
 ## Main Files
 
-- `outputs/shadow_board_app.html`: self-contained browser application.
+- `outputs/index.html`: self-contained browser application.
 - `outputs/shadow_board_from_a4.py`: reference Python command-line processing script used during prototyping.
 - `README.md`: short user-facing project overview.
 - `.gitignore`: excludes generated previews and test outputs from Git.
