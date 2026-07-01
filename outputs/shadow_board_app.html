@@ -122,7 +122,7 @@
     }
     .toolbar {
       display: grid;
-      grid-template-columns: repeat(5, minmax(110px, 1fr));
+      grid-template-columns: repeat(6, minmax(110px, 1fr));
       gap: 10px;
       align-items: end;
       background: var(--panel);
@@ -337,6 +337,7 @@
         <label>Drawer width mm<input id="drawerW" type="number" value="560" min="50" step="1"></label>
         <label>Drawer height mm<input id="drawerH" type="number" value="390" min="50" step="1"></label>
         <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
+        <button id="autoArrange">Auto Arrange All</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
         <button id="fitView">Fit View</button>
       </section>
@@ -415,6 +416,7 @@
       importProject: document.getElementById("importProject"),
       importProjectInput: document.getElementById("importProjectInput"),
       rotInput: document.getElementById("rotInput"),
+      autoArrange: document.getElementById("autoArrange"),
       downloadLayout: document.getElementById("downloadLayout"),
       downloadSelected: document.getElementById("downloadSelected"),
       duplicateSelected: document.getElementById("duplicateSelected"),
@@ -441,7 +443,8 @@
       showNotice.timer = setTimeout(() => el.toast.classList.add("hidden"), 3600);
     }
 
-    function serializeProject() {
+    function serializeProject(options = {}) {
+      const includeLargePreviews = options.includeLargePreviews !== false;
       return {
         app: "Shadow Board DXF Maker",
         version: 1,
@@ -464,7 +467,7 @@
           height: tool.height,
           defaultPulls: clonePulls(tool.defaultPulls),
           preview: tool.preview,
-          previewLarge: tool.previewLarge
+          previewLarge: includeLargePreviews ? tool.previewLarge : ""
         })),
         items: state.items.map(item => ({
           id: item.id,
@@ -520,7 +523,7 @@
 
     function saveProject(auto = false) {
       try {
-        localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(serializeProject()));
+        localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(serializeProject({ includeLargePreviews: false })));
         if (!auto) showNotice("Project saved in this browser.");
         return true;
       } catch (err) {
@@ -552,7 +555,7 @@
     }
 
     function exportProjectFile() {
-      download("shadow_board_project.json", JSON.stringify(serializeProject(), null, 2), "application/json");
+      download("shadow_board_project.json", JSON.stringify(serializeProject({ includeLargePreviews: true }), null, 2), "application/json");
       showNotice("Project JSON exported.");
     }
 
@@ -1372,6 +1375,84 @@
       return item.pulls;
     }
 
+    function itemLayoutPoints(item) {
+      const tool = getTool(item.toolId);
+      const pts = tool.points.slice();
+      itemPulls(item).forEach(p => {
+        pts.push(
+          { x: p.x - p.r, y: p.y },
+          { x: p.x + p.r, y: p.y },
+          { x: p.x, y: p.y - p.r },
+          { x: p.x, y: p.y + p.r }
+        );
+      });
+      return pts;
+    }
+
+    function rotatedFootprint(item, rot) {
+      const tool = getTool(item.toolId);
+      const cx = tool.width / 2, cy = tool.height / 2;
+      const rad = rot * Math.PI / 180;
+      const pts = itemLayoutPoints(item).map(p => {
+        const dx = p.x - cx, dy = p.y - cy;
+        return {
+          x: cx + dx * Math.cos(rad) - dy * Math.sin(rad),
+          y: cy + dx * Math.sin(rad) + dy * Math.cos(rad)
+        };
+      });
+      const b = bboxPoints(pts);
+      return { ...b, width: b.x1 - b.x0, height: b.y1 - b.y0 };
+    }
+
+    function placeItemByFootprint(item, x, y, rot, footprint) {
+      item.rot = rot;
+      item.x = x - footprint.x0;
+      item.y = y - footprint.y0;
+    }
+
+    function autoArrangeAll() {
+      if (!state.items.length) {
+        showNotice("No layout items to arrange. Process or add tools first.");
+        return;
+      }
+      const dw = Number(el.drawerW.value);
+      const dh = Number(el.drawerH.value);
+      const gap = Math.max(6, Number(el.offsetInput.value) * 2 + 6);
+      let x = gap;
+      let y = gap;
+      let rowH = 0;
+      let overflow = 0;
+      const arranged = state.items
+        .map((item, order) => {
+          const fp0 = rotatedFootprint(item, 0);
+          const fp90 = rotatedFootprint(item, 90);
+          return { item, order, area: Math.max(fp0.width * fp0.height, fp90.width * fp90.height) };
+        })
+        .sort((a, b) => b.area - a.area || a.order - b.order);
+
+      for (const entry of arranged) {
+        const item = entry.item;
+        let candidates = [0, 90].map(rot => ({ rot, fp: rotatedFootprint(item, rot) }));
+        candidates = candidates.sort((a, b) => a.fp.height - b.fp.height || a.fp.width - b.fp.width);
+        let pick = candidates.find(c => x + c.fp.width <= dw - gap);
+        if (!pick) {
+          x = gap;
+          y += rowH + gap;
+          rowH = 0;
+          pick = candidates.find(c => x + c.fp.width <= dw - gap) || candidates.sort((a, b) => a.fp.width - b.fp.width)[0];
+        }
+        if (y + pick.fp.height > dh - gap || x + pick.fp.width > dw - gap) overflow++;
+        placeItemByFootprint(item, x, y, pick.rot, pick.fp);
+        invalidateContourCache(item);
+        x += pick.fp.width + gap;
+        rowH = Math.max(rowH, pick.fp.height);
+      }
+
+      state.selectedId = state.items[0]?.id || null;
+      renderAll();
+      showNotice(overflow ? `Auto arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Auto arranged ${state.items.length} item(s).`);
+    }
+
     function drawLayout() {
       resizeCanvas();
       const rect = el.canvas.getBoundingClientRect();
@@ -1570,6 +1651,7 @@
           state.tools.push(tool);
           addToolToLayout(tool);
         }
+        autoArrangeAll();
         setStatus("Done. Drag tools in the drawer and export DXF.");
       } catch (err) {
         console.error(err);
@@ -1632,6 +1714,7 @@
     el.fitView.addEventListener("click", fitView);
     el.downloadLayout.addEventListener("click", exportLayout);
     el.downloadSelected.addEventListener("click", exportSelected);
+    el.autoArrange.addEventListener("click", autoArrangeAll);
     el.duplicateSelected.addEventListener("click", () => {
       const item = getSelectedItem();
       if (!item) {

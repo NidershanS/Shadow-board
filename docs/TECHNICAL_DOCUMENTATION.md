@@ -20,7 +20,8 @@ Shadow Board DXF Maker converts photos of tools placed on A3 or A4 paper into la
 5. Preview each detected tool contour.
 6. Add tools to the drawer layout and drag/rotate them into position.
 7. Move the blue finger-pull handles.
-8. Export either the full drawer DXF or the selected tool DXF.
+8. Use `Auto Arrange All` to lay out bulk imports, if needed.
+9. Export either the full drawer DXF or the selected tool DXF.
 
 ## Project Persistence
 
@@ -132,11 +133,23 @@ Selected tool export:
 
 ## Nesting Roadmap
 
-The planned nesting module should use saved project geometry as its input. The first practical version should:
+The first nesting module uses saved project geometry as its input. It:
 
-- Read all layout-item contours in millimeters.
-- Try rotations such as `0`, `90`, `180`, and `270` degrees.
-- Respect drawer width, drawer height, and a configurable spacing value.
-- Place tools automatically, then allow manual drag/rotate cleanup.
+- Reads all layout-item contours in millimeters.
+- Includes finger-pull circle extents in the layout footprint.
+- Tries `0` and `90` degree rotations.
+- Uses simple shelf/row packing, largest items first.
+- Respects drawer width and drawer height as the target area.
+- Keeps manual drag/rotate cleanup available after the automatic placement.
+
+This is intentionally the first practical step, not final advanced nesting.
 
 Deepnest is a useful reference for advanced nesting behavior such as DXF workflows, no-fit polygon placement, common-line merging, and speed-critical geometry. Directly embedding the whole Deepnest desktop project would make this app heavier, so the cleaner route is to build a browser-native nesting module around this app's own contour data.
+
+Future improvements can add:
+
+- More rotation candidates, such as `15` or `30` degree steps.
+- Collision checks against the actual contour instead of only the layout footprint.
+- No-fit polygon placement.
+- Better scoring for tight drawer packing.
+- Optional common-line or shared-edge behavior where it makes sense for foam cutting.
