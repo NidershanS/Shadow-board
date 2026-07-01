@@ -122,7 +122,7 @@
     }
     .toolbar {
       display: grid;
-      grid-template-columns: repeat(7, minmax(110px, 1fr));
+      grid-template-columns: repeat(9, minmax(90px, 1fr));
       gap: 10px;
       align-items: end;
       background: var(--panel);
@@ -234,6 +234,39 @@
       font-size: 13px;
       line-height: 1.35;
     }
+    .busyOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: grid;
+      place-items: center;
+      background: rgba(245, 247, 248, 0.66);
+      backdrop-filter: blur(1.5px);
+    }
+    .busyBox {
+      min-width: 240px;
+      display: grid;
+      justify-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 16px 42px rgba(23, 32, 38, 0.18);
+      padding: 18px 20px;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .spinner {
+      width: 34px;
+      height: 34px;
+      border: 4px solid #d6dde2;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
     .modal {
       position: fixed;
       inset: 0;
@@ -342,6 +375,8 @@
         <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
         <button id="autoArrange">Auto Arrange All</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
+        <button id="zoomOut">Zoom -</button>
+        <button id="zoomIn">Zoom +</button>
         <button id="fitView">Fit View</button>
       </section>
 
@@ -368,6 +403,12 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <div id="busyOverlay" class="busyOverlay hidden" aria-live="polite" aria-busy="true">
+    <div class="busyBox">
+      <div class="spinner" aria-hidden="true"></div>
+      <strong id="busyText">Working...</strong>
+    </div>
+  </div>
   <div id="previewModal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modalPanel">
       <div class="modalTop">
@@ -425,11 +466,15 @@
       autoArrange: document.getElementById("autoArrange"),
       downloadLayout: document.getElementById("downloadLayout"),
       downloadSelected: document.getElementById("downloadSelected"),
+      zoomOut: document.getElementById("zoomOut"),
+      zoomIn: document.getElementById("zoomIn"),
       duplicateSelected: document.getElementById("duplicateSelected"),
       rotateLeft: document.getElementById("rotateLeft"),
       rotateRight: document.getElementById("rotateRight"),
       fitView: document.getElementById("fitView"),
       toast: document.getElementById("toast"),
+      busyOverlay: document.getElementById("busyOverlay"),
+      busyText: document.getElementById("busyText"),
       previewModal: document.getElementById("previewModal"),
       previewTitle: document.getElementById("previewTitle"),
       previewImage: document.getElementById("previewImage"),
@@ -447,6 +492,19 @@
       el.toast.classList.remove("hidden");
       clearTimeout(showNotice.timer);
       showNotice.timer = setTimeout(() => el.toast.classList.add("hidden"), 3600);
+    }
+
+    function nextFrame() {
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }
+
+    function showBusy(text) {
+      el.busyText.textContent = text;
+      el.busyOverlay.classList.remove("hidden");
+    }
+
+    function hideBusy() {
+      el.busyOverlay.classList.add("hidden");
     }
 
     function cleanProjectName() {
@@ -1440,6 +1498,17 @@
       drawLayout();
     }
 
+    function zoomView(factor) {
+      resizeCanvas();
+      const rect = el.canvas.getBoundingClientRect();
+      const center = { x: rect.width / 2, y: rect.height / 2 };
+      const world = toWorld(center.x, center.y);
+      state.scale = Math.max(0.05, Math.min(40, state.scale * factor));
+      state.viewX = center.x - world.x * state.scale;
+      state.viewY = center.y - world.y * state.scale;
+      drawLayout();
+    }
+
     function toScreen(p) {
       return { x: state.viewX + p.x * state.scale, y: state.viewY + p.y * state.scale };
     }
@@ -1509,21 +1578,41 @@
       return { ...b, width: b.x1 - b.x0, height: b.y1 - b.y0 };
     }
 
-    function rotatedContour(item, rot) {
-      const tool = getTool(item.toolId);
+    function rotateLocalPoint(p, tool, rad) {
       const cx = tool.width / 2, cy = tool.height / 2;
+      const dx = p.x - cx, dy = p.y - cy;
+      return {
+        x: cx + dx * Math.cos(rad) - dy * Math.sin(rad),
+        y: cy + dx * Math.sin(rad) + dy * Math.cos(rad)
+      };
+    }
+
+    function circlePolygon(center, radius, segments = 28) {
+      const pts = [];
+      for (let i = 0; i < segments; i++) {
+        const a = Math.PI * 2 * i / segments;
+        pts.push({ x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius });
+      }
+      pts.push({ ...pts[0] });
+      return pts;
+    }
+
+    function rotatedCollisionPolygons(item, rot) {
+      const tool = getTool(item.toolId);
       const rad = rot * Math.PI / 180;
-      return tool.points.map(p => {
-        const dx = p.x - cx, dy = p.y - cy;
-        return {
-          x: cx + dx * Math.cos(rad) - dy * Math.sin(rad),
-          y: cy + dx * Math.sin(rad) + dy * Math.cos(rad)
-        };
+      const polygons = [tool.points.map(p => rotateLocalPoint(p, tool, rad))];
+      itemPulls(item).forEach(pull => {
+        polygons.push(circlePolygon(rotateLocalPoint(pull, tool, rad), pull.r));
       });
+      return polygons;
     }
 
     function shiftedPoints(points, dx, dy) {
       return points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+    }
+
+    function shiftedPolygons(polygons, dx, dy) {
+      return polygons.map(poly => shiftedPoints(poly, dx, dy));
     }
 
     function placeItemByFootprint(item, x, y, rot, footprint) {
@@ -1600,6 +1689,10 @@
       return false;
     }
 
+    function polygonSetsTooClose(aPolys, bPolys, spacingMm) {
+      return aPolys.some(a => bPolys.some(b => polygonsTooClose(a, b, spacingMm)));
+    }
+
     function candidatePositions(placed, gap) {
       const pts = [{ x: gap, y: gap }];
       placed.forEach(p => {
@@ -1614,11 +1707,13 @@
         .sort((a, b) => a.y - b.y || a.x - b.x);
     }
 
-    function autoArrangeAll() {
+    async function autoArrangeAll() {
       if (!state.items.length) {
         showNotice("No layout items to arrange. Process or add tools first.");
         return;
       }
+      showBusy("Arranging contours...");
+      await nextFrame();
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
       const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
@@ -1632,53 +1727,57 @@
         })
         .sort((a, b) => b.area - a.area || a.order - b.order);
 
-      for (const entry of arranged) {
-        const item = entry.item;
-        const rotationOptions = [0, 90, 180, 270].map(rot => ({
-          rot,
-          fp: rotatedFootprint(item, rot),
-          contour: rotatedContour(item, rot)
-        }));
-        let best = null;
-        for (const candidate of candidatePositions(placed, gap)) {
-          for (const option of rotationOptions) {
-            const bbox = {
-              x0: candidate.x,
-              y0: candidate.y,
-              x1: candidate.x + option.fp.width,
-              y1: candidate.y + option.fp.height
-            };
-            if (bbox.x1 > dw - gap || bbox.y1 > dh - gap) continue;
-            const contour = shiftedPoints(option.contour, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
-            const collides = placed.some(p => bboxOverlap(expandBbox(bbox, gap), p.bbox) && polygonsTooClose(contour, p.contour, gap));
-            if (collides) continue;
-            const score = bbox.y1 * 100000 + bbox.x1 * 100 + candidate.y + candidate.x * 0.01;
-            if (!best || score < best.score) best = { ...option, x: candidate.x, y: candidate.y, bbox, contour, score };
+      try {
+        for (const entry of arranged) {
+          const item = entry.item;
+          const rotationOptions = [0, 90, 180, 270].map(rot => ({
+            rot,
+            fp: rotatedFootprint(item, rot),
+            polygons: rotatedCollisionPolygons(item, rot)
+          }));
+          let best = null;
+          for (const candidate of candidatePositions(placed, gap)) {
+            for (const option of rotationOptions) {
+              const bbox = {
+                x0: candidate.x,
+                y0: candidate.y,
+                x1: candidate.x + option.fp.width,
+                y1: candidate.y + option.fp.height
+              };
+              if (bbox.x1 > dw - gap || bbox.y1 > dh - gap) continue;
+              const polygons = shiftedPolygons(option.polygons, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
+              const collides = placed.some(p => bboxOverlap(expandBbox(bbox, gap), p.bbox) && polygonSetsTooClose(polygons, p.polygons, gap));
+              if (collides) continue;
+              const score = bbox.y1 * 100000 + bbox.x1 * 100 + candidate.y + candidate.x * 0.01;
+              if (!best || score < best.score) best = { ...option, x: candidate.x, y: candidate.y, bbox, polygons, score };
+            }
           }
+
+          if (!best) {
+            overflow++;
+            const option = rotationOptions.sort((a, b) => a.fp.width * a.fp.height - b.fp.width * b.fp.height)[0];
+            const y = placed.reduce((maxY, p) => Math.max(maxY, p.bbox.y1), gap) + gap;
+            const bbox = { x0: gap, y0: y, x1: gap + option.fp.width, y1: y + option.fp.height };
+            best = {
+              ...option,
+              x: gap,
+              y,
+              bbox,
+              polygons: shiftedPolygons(option.polygons, gap - option.fp.x0, y - option.fp.y0)
+            };
+          }
+
+          placeItemByFootprint(item, best.x, best.y, best.rot, best.fp);
+          invalidateContourCache(item);
+          placed.push({ item, bbox: best.bbox, polygons: best.polygons });
         }
 
-        if (!best) {
-          overflow++;
-          const option = rotationOptions.sort((a, b) => a.fp.width * a.fp.height - b.fp.width * b.fp.height)[0];
-          const y = placed.reduce((maxY, p) => Math.max(maxY, p.bbox.y1), gap) + gap;
-          const bbox = { x0: gap, y0: y, x1: gap + option.fp.width, y1: y + option.fp.height };
-          best = {
-            ...option,
-            x: gap,
-            y,
-            bbox,
-            contour: shiftedPoints(option.contour, gap - option.fp.x0, y - option.fp.y0)
-          };
-        }
-
-        placeItemByFootprint(item, best.x, best.y, best.rot, best.fp);
-        invalidateContourCache(item);
-        placed.push({ item, bbox: best.bbox, contour: best.contour });
+        state.selectedId = state.items[0]?.id || null;
+        renderAll();
+        showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite arranged ${state.items.length} item(s).`);
+      } finally {
+        hideBusy();
       }
-
-      state.selectedId = state.items[0]?.id || null;
-      renderAll();
-      showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite arranged ${state.items.length} item(s).`);
     }
 
     function drawLayout() {
@@ -1881,7 +1980,7 @@
           state.tools.push(tool);
           addToolToLayout(tool);
         }
-        autoArrangeAll();
+        await autoArrangeAll();
         setStatus("Done. Drag tools in the drawer and export DXF.");
       } catch (err) {
         console.error(err);
@@ -1937,13 +2036,15 @@
       state.drag = null;
       renderAll();
     });
-    window.addEventListener("resize", fitView);
+    window.addEventListener("resize", drawLayout);
     el.drawerW.addEventListener("input", fitView);
     el.drawerH.addEventListener("input", fitView);
     el.fitView.addEventListener("click", fitView);
+    el.zoomOut.addEventListener("click", () => zoomView(0.82));
+    el.zoomIn.addEventListener("click", () => zoomView(1.22));
     el.downloadLayout.addEventListener("click", exportLayout);
     el.downloadSelected.addEventListener("click", exportSelected);
-    el.autoArrange.addEventListener("click", autoArrangeAll);
+    el.autoArrange.addEventListener("click", () => autoArrangeAll());
     el.duplicateSelected.addEventListener("click", () => {
       const item = getSelectedItem();
       if (!item) {

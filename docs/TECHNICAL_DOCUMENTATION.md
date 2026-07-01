@@ -153,11 +153,14 @@ The first nesting module uses saved project geometry as its input. It:
 
 - Reads all layout-item contours in millimeters.
 - Includes finger-pull circle extents in the layout footprint.
-- Uses `Arrange spacing mm` as the requested contour-to-contour clearance between nested tools.
+- Includes finger-pull circles in collision and spacing checks.
+- Uses `Arrange spacing mm` as the requested contour-to-contour clearance between nested tools and pull circles.
 - Tries `0`, `90`, `180`, and `270` degree rotations in the experimental Deepnest-lite branch.
 - Uses simple shelf/row packing on `main`; the Deepnest-lite branch uses contour-aware candidate placement.
 - Respects drawer width and drawer height as the target area.
 - Keeps manual drag/rotate cleanup available after the automatic placement.
+- Provides zoom controls for inspecting the drawer without changing the drawer dimensions.
+- Shows a busy overlay while the Deepnest-lite arrange pass is calculating, so large layouts do not appear frozen.
 
 This is intentionally the first practical step, not final advanced nesting.
 
