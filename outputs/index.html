@@ -1597,12 +1597,25 @@
       return pts;
     }
 
+    const NEST_ROTATIONS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+    const NEST_MAX_POLYGON_POINTS = 96;
+
+    function nestingPolygon(points) {
+      if (points.length <= NEST_MAX_POLYGON_POINTS) return points;
+      const closed = points.length > 2 && dist(points[0], points[points.length - 1]) < 0.001;
+      const source = closed ? points.slice(0, -1) : points;
+      const step = Math.max(1, Math.ceil(source.length / NEST_MAX_POLYGON_POINTS));
+      const out = source.filter((_, i) => i % step === 0);
+      if (out.length && dist(out[0], out[out.length - 1]) > 0.001) out.push({ ...out[0] });
+      return out;
+    }
+
     function rotatedCollisionPolygons(item, rot) {
       const tool = getTool(item.toolId);
       const rad = rot * Math.PI / 180;
-      const polygons = [tool.points.map(p => rotateLocalPoint(p, tool, rad))];
+      const polygons = [nestingPolygon(tool.points).map(p => rotateLocalPoint(p, tool, rad))];
       itemPulls(item).forEach(pull => {
-        polygons.push(circlePolygon(rotateLocalPoint(pull, tool, rad), pull.r));
+        polygons.push(circlePolygon(rotateLocalPoint(pull, tool, rad), pull.r, 20));
       });
       return polygons;
     }
@@ -1693,12 +1706,42 @@
       return aPolys.some(a => bPolys.some(b => polygonsTooClose(a, b, spacingMm)));
     }
 
-    function candidatePositions(placed, gap) {
+    function uniquePositions(points) {
+      return points
+        .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+        .filter((p, i, arr) => arr.findIndex(q => Math.abs(q.x - p.x) < 0.01 && Math.abs(q.y - p.y) < 0.01) === i);
+    }
+
+    function samplePolygonPoints(polygons, maxPerPolygon = 14) {
+      const samples = [];
+      polygons.forEach(poly => {
+        const source = dist(poly[0], poly[poly.length - 1]) < 0.001 ? poly.slice(0, -1) : poly;
+        const step = Math.max(1, Math.floor(source.length / maxPerPolygon));
+        for (let i = 0; i < source.length; i += step) samples.push(source[i]);
+      });
+      return samples;
+    }
+
+    function candidatePositions(placed, gap, option = null) {
       const xs = [gap];
       const ys = [gap];
       placed.forEach(p => {
         xs.push(p.bbox.x0, p.bbox.x1 + gap);
         ys.push(p.bbox.y0, p.bbox.y1 + gap);
+        if (option) {
+          xs.push(
+            p.bbox.x0 - option.fp.width - gap,
+            p.bbox.x1 + gap,
+            p.bbox.x0,
+            p.bbox.x1 - option.fp.width
+          );
+          ys.push(
+            p.bbox.y0 - option.fp.height - gap,
+            p.bbox.y1 + gap,
+            p.bbox.y0,
+            p.bbox.y1 - option.fp.height
+          );
+        }
       });
       const uniqueXs = xs.filter((x, i, arr) => arr.findIndex(v => Math.abs(v - x) < 0.01) === i);
       const uniqueYs = ys.filter((y, i, arr) => arr.findIndex(v => Math.abs(v - y) < 0.01) === i);
@@ -1713,9 +1756,87 @@
           { x: p.bbox.x1 + gap, y: p.bbox.y1 + gap }
         );
       });
-      return pts.filter((p, i, arr) => arr.findIndex(q => Math.abs(q.x - p.x) < 0.01 && Math.abs(q.y - p.y) < 0.01) === i)
+      if (option) {
+        const optionSamples = samplePolygonPoints(option.polygons, 10);
+        const nudges = [
+          { x: gap, y: 0 },
+          { x: -gap, y: 0 },
+          { x: 0, y: gap },
+          { x: 0, y: -gap }
+        ];
+        placed.forEach(p => {
+          const placedSamples = samplePolygonPoints(p.polygons, 10);
+          placedSamples.forEach(a => {
+            optionSamples.forEach(b => {
+              nudges.forEach(n => {
+                pts.push({
+                  x: a.x - b.x + option.fp.x0 + n.x,
+                  y: a.y - b.y + option.fp.y0 + n.y
+                });
+              });
+            });
+          });
+        });
+      }
+      return uniquePositions(pts)
         .filter(p => p.x >= gap - 0.01 && p.y >= gap - 0.01)
-        .sort((a, b) => a.y - b.y || a.x - b.x);
+        .sort((a, b) => a.y - b.y || a.x - b.x)
+        .slice(0, 900);
+    }
+
+    function layoutBounds(placed) {
+      if (!placed.length) return { x0: 0, y0: 0, x1: 0, y1: 0, width: 0, height: 0 };
+      const x0 = Math.min(...placed.map(p => p.bbox.x0));
+      const y0 = Math.min(...placed.map(p => p.bbox.y0));
+      const x1 = Math.max(...placed.map(p => p.bbox.x1));
+      const y1 = Math.max(...placed.map(p => p.bbox.y1));
+      return { x0, y0, x1, y1, width: x1 - x0, height: y1 - y0 };
+    }
+
+    function movedPlacement(p, x, y) {
+      return {
+        ...p,
+        x,
+        y,
+        bbox: { x0: x, y0: y, x1: x + p.fp.width, y1: y + p.fp.height },
+        polygons: shiftedPolygons(p.optionPolygons, x - p.fp.x0, y - p.fp.y0)
+      };
+    }
+
+    function placementFits(test, placed, gap, dw, dh, ignoreIndex = -1) {
+      if (test.bbox.x0 < gap - 0.01 || test.bbox.y0 < gap - 0.01 || test.bbox.x1 > dw - gap + 0.01 || test.bbox.y1 > dh - gap + 0.01) return false;
+      return !placed.some((p, index) => index !== ignoreIndex && bboxOverlap(expandBbox(test.bbox, gap), p.bbox) && polygonSetsTooClose(test.polygons, p.polygons, gap));
+    }
+
+    function compactPlacements(placed, gap, dw, dh) {
+      const steps = [Math.max(8, gap), Math.max(3, gap / 2), 1];
+      steps.forEach(step => {
+        let moved = true;
+        let guard = 0;
+        while (moved && guard++ < 120) {
+          moved = false;
+          placed.forEach((p, index) => {
+            let current = p;
+            let changed = true;
+            while (changed) {
+              changed = false;
+              const left = movedPlacement(current, current.x - step, current.y);
+              if (placementFits(left, placed, gap, dw, dh, index)) {
+                current = left;
+                changed = true;
+                moved = true;
+              }
+              const up = movedPlacement(current, current.x, current.y - step);
+              if (placementFits(up, placed, gap, dw, dh, index)) {
+                current = up;
+                changed = true;
+                moved = true;
+              }
+            }
+            placed[index] = current;
+          });
+        }
+      });
     }
 
     async function autoArrangeAll() {
@@ -1729,65 +1850,90 @@
       const dh = Number(el.drawerH.value);
       const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
       let overflow = 0;
-      const placed = [];
-      const arranged = state.items
+      const entries = state.items
         .map((item, order) => {
           const fp0 = rotatedFootprint(item, 0);
           const fp90 = rotatedFootprint(item, 90);
-          return { item, order, area: Math.max(fp0.width * fp0.height, fp90.width * fp90.height) };
-        })
-        .sort((a, b) => b.area - a.area || a.order - b.order);
+          const area = Math.max(fp0.width * fp0.height, fp90.width * fp90.height);
+          const aspect = Math.max(fp0.width, fp0.height) / Math.max(1, Math.min(fp0.width, fp0.height));
+          return { item, order, area, width: Math.max(fp0.width, fp90.width), height: Math.max(fp0.height, fp90.height), aspect };
+        });
 
-      try {
-        for (const entry of arranged) {
+      function arrangeOrder(arranged) {
+        const placed = [];
+        let failed = 0;
+        arranged.forEach(entry => {
           const item = entry.item;
-          const rotationOptions = [0, 90, 180, 270].map(rot => ({
+          const rotationOptions = NEST_ROTATIONS.map(rot => ({
             rot,
             fp: rotatedFootprint(item, rot),
             polygons: rotatedCollisionPolygons(item, rot)
-          }));
+          })).sort((a, b) => a.fp.height - b.fp.height || a.fp.width - b.fp.width);
           let best = null;
-          for (const candidate of candidatePositions(placed, gap)) {
-            for (const option of rotationOptions) {
+          for (const option of rotationOptions) {
+            for (const candidate of candidatePositions(placed, gap, option)) {
               const bbox = {
                 x0: candidate.x,
                 y0: candidate.y,
                 x1: candidate.x + option.fp.width,
                 y1: candidate.y + option.fp.height
               };
-              if (bbox.x1 > dw - gap || bbox.y1 > dh - gap) continue;
               const polygons = shiftedPolygons(option.polygons, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
-              const collides = placed.some(p => bboxOverlap(expandBbox(bbox, gap), p.bbox) && polygonSetsTooClose(polygons, p.polygons, gap));
-              if (collides) continue;
-              const usedW = Math.max(bbox.x1, ...placed.map(p => p.bbox.x1));
-              const usedH = Math.max(bbox.y1, ...placed.map(p => p.bbox.y1));
-              const score = usedH * 100000 + usedW * 700 + bbox.y1 * 30 + bbox.x1 + candidate.y * 0.1 + candidate.x * 0.01;
-              if (!best || score < best.score) best = { ...option, x: candidate.x, y: candidate.y, bbox, polygons, score };
+              const test = { entry, item, rot: option.rot, fp: option.fp, x: candidate.x, y: candidate.y, bbox, polygons, optionPolygons: option.polygons };
+              if (!placementFits(test, placed, gap, dw, dh)) continue;
+              const withTest = [...placed, test];
+              const used = layoutBounds(withTest);
+              const waste = (used.width * used.height) - withTest.reduce((sum, p) => sum + p.entry.area, 0);
+              const score = used.height * 100000 + used.width * 800 + waste * 0.8 + bbox.y0 * 40 + bbox.x0;
+              if (!best || score < best.score) best = { ...test, score };
             }
           }
 
           if (!best) {
-            overflow++;
+            failed++;
             const option = rotationOptions.sort((a, b) => a.fp.width * a.fp.height - b.fp.width * b.fp.height)[0];
             const y = placed.reduce((maxY, p) => Math.max(maxY, p.bbox.y1), gap) + gap;
-            const bbox = { x0: gap, y0: y, x1: gap + option.fp.width, y1: y + option.fp.height };
-            best = {
-              ...option,
-              x: gap,
-              y,
-              bbox,
-              polygons: shiftedPolygons(option.polygons, gap - option.fp.x0, y - option.fp.y0)
-            };
+            best = movedPlacement({
+              entry,
+              item,
+              rot: option.rot,
+              fp: option.fp,
+              optionPolygons: option.polygons
+            }, gap, y);
           }
 
-          placeItemByFootprint(item, best.x, best.y, best.rot, best.fp);
-          invalidateContourCache(item);
-          placed.push({ item, bbox: best.bbox, polygons: best.polygons });
-        }
+          placed.push(best);
+        });
+        compactPlacements(placed, gap, dw, dh);
+        const used = layoutBounds(placed);
+        const overflowArea = placed.reduce((sum, p) => sum + Math.max(0, p.bbox.x1 - (dw - gap)) * p.fp.height + Math.max(0, p.bbox.y1 - (dh - gap)) * p.fp.width, 0);
+        const waste = (used.width * used.height) - placed.reduce((sum, p) => sum + p.entry.area, 0);
+        return {
+          placed,
+          overflow: failed + (overflowArea > 0 ? 1 : 0),
+          score: overflowArea * 1e10 + failed * 1e9 + used.height * 100000 + used.width * 800 + waste
+        };
+      }
+
+      try {
+        const orders = [
+          [...entries].sort((a, b) => b.area - a.area || a.order - b.order),
+          [...entries].sort((a, b) => b.height - a.height || b.area - a.area),
+          [...entries].sort((a, b) => b.width - a.width || b.area - a.area),
+          [...entries].sort((a, b) => b.aspect - a.aspect || b.area - a.area),
+          [...entries].sort((a, b) => a.order - b.order)
+        ];
+        const result = orders.map(arrangeOrder).sort((a, b) => a.score - b.score)[0];
+        overflow = result.overflow;
+
+        result.placed.forEach(best => {
+          placeItemByFootprint(best.item, best.x, best.y, best.rot, best.fp);
+          invalidateContourCache(best.item);
+        });
 
         state.selectedId = state.items[0]?.id || null;
         renderAll();
-        showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite arranged ${state.items.length} item(s).`);
+        showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite densely arranged ${state.items.length} item(s).`);
       } finally {
         hideBusy();
       }
