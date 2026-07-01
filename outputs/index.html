@@ -122,7 +122,7 @@
     }
     .toolbar {
       display: grid;
-      grid-template-columns: repeat(9, minmax(90px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
       gap: 10px;
       align-items: end;
       background: var(--panel);
@@ -133,7 +133,7 @@
     .stage {
       min-height: 0;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 320px;
+      grid-template-columns: minmax(0, 1fr) 360px;
       gap: 12px;
     }
     .canvasWrap {
@@ -1493,8 +1493,8 @@
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
       state.scale = Math.min((rect.width - 44) / dw, (rect.height - 44) / dh);
-      state.viewX = (rect.width - dw * state.scale) / 2;
-      state.viewY = (rect.height - dh * state.scale) / 2;
+      state.viewX = 26;
+      state.viewY = 26;
       drawLayout();
     }
 
@@ -1694,16 +1694,27 @@
     }
 
     function candidatePositions(placed, gap) {
-      const pts = [{ x: gap, y: gap }];
+      const xs = [gap];
+      const ys = [gap];
+      placed.forEach(p => {
+        xs.push(p.bbox.x0, p.bbox.x1 + gap);
+        ys.push(p.bbox.y0, p.bbox.y1 + gap);
+      });
+      const uniqueXs = xs.filter((x, i, arr) => arr.findIndex(v => Math.abs(v - x) < 0.01) === i);
+      const uniqueYs = ys.filter((y, i, arr) => arr.findIndex(v => Math.abs(v - y) < 0.01) === i);
+      const pts = [];
+      uniqueYs.forEach(y => {
+        uniqueXs.forEach(x => pts.push({ x, y }));
+      });
       placed.forEach(p => {
         pts.push(
-          { x: p.bbox.x1 + gap, y: gap },
-          { x: gap, y: p.bbox.y1 + gap },
           { x: p.bbox.x1 + gap, y: p.bbox.y0 },
-          { x: p.bbox.x0, y: p.bbox.y1 + gap }
+          { x: p.bbox.x0, y: p.bbox.y1 + gap },
+          { x: p.bbox.x1 + gap, y: p.bbox.y1 + gap }
         );
       });
       return pts.filter((p, i, arr) => arr.findIndex(q => Math.abs(q.x - p.x) < 0.01 && Math.abs(q.y - p.y) < 0.01) === i)
+        .filter(p => p.x >= gap - 0.01 && p.y >= gap - 0.01)
         .sort((a, b) => a.y - b.y || a.x - b.x);
     }
 
@@ -1748,7 +1759,9 @@
               const polygons = shiftedPolygons(option.polygons, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
               const collides = placed.some(p => bboxOverlap(expandBbox(bbox, gap), p.bbox) && polygonSetsTooClose(polygons, p.polygons, gap));
               if (collides) continue;
-              const score = bbox.y1 * 100000 + bbox.x1 * 100 + candidate.y + candidate.x * 0.01;
+              const usedW = Math.max(bbox.x1, ...placed.map(p => p.bbox.x1));
+              const usedH = Math.max(bbox.y1, ...placed.map(p => p.bbox.y1));
+              const score = usedH * 100000 + usedW * 700 + bbox.y1 * 30 + bbox.x1 + candidate.y * 0.1 + candidate.x * 0.01;
               if (!best || score < best.score) best = { ...option, x: candidate.x, y: candidate.y, bbox, polygons, score };
             }
           }
