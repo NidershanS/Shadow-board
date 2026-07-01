@@ -1505,10 +1505,80 @@
       return { ...b, width: b.x1 - b.x0, height: b.y1 - b.y0 };
     }
 
+    function rotatedContour(item, rot) {
+      const tool = getTool(item.toolId);
+      const cx = tool.width / 2, cy = tool.height / 2;
+      const rad = rot * Math.PI / 180;
+      return tool.points.map(p => {
+        const dx = p.x - cx, dy = p.y - cy;
+        return {
+          x: cx + dx * Math.cos(rad) - dy * Math.sin(rad),
+          y: cy + dx * Math.sin(rad) + dy * Math.cos(rad)
+        };
+      });
+    }
+
+    function shiftedPoints(points, dx, dy) {
+      return points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+    }
+
     function placeItemByFootprint(item, x, y, rot, footprint) {
       item.rot = rot;
       item.x = x - footprint.x0;
       item.y = y - footprint.y0;
+    }
+
+    function bboxOverlap(a, b) {
+      return a.x0 <= b.x1 && a.x1 >= b.x0 && a.y0 <= b.y1 && a.y1 >= b.y0;
+    }
+
+    function orientation(a, b, c) {
+      const v = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+      return Math.abs(v) < 1e-7 ? 0 : (v > 0 ? 1 : 2);
+    }
+
+    function onSegment(a, b, c) {
+      return b.x <= Math.max(a.x, c.x) + 1e-7 && b.x + 1e-7 >= Math.min(a.x, c.x) &&
+        b.y <= Math.max(a.y, c.y) + 1e-7 && b.y + 1e-7 >= Math.min(a.y, c.y);
+    }
+
+    function segmentsIntersect(a, b, c, d) {
+      const o1 = orientation(a, b, c);
+      const o2 = orientation(a, b, d);
+      const o3 = orientation(c, d, a);
+      const o4 = orientation(c, d, b);
+      if (o1 !== o2 && o3 !== o4) return true;
+      if (o1 === 0 && onSegment(a, c, b)) return true;
+      if (o2 === 0 && onSegment(a, d, b)) return true;
+      if (o3 === 0 && onSegment(c, a, d)) return true;
+      if (o4 === 0 && onSegment(c, b, d)) return true;
+      return false;
+    }
+
+    function polygonsOverlap(a, b) {
+      const ab = bboxPoints(a);
+      const bb = bboxPoints(b);
+      if (!bboxOverlap(ab, bb)) return false;
+      for (let i = 0; i < a.length - 1; i++) {
+        for (let j = 0; j < b.length - 1; j++) {
+          if (segmentsIntersect(a[i], a[i + 1], b[j], b[j + 1])) return true;
+        }
+      }
+      return pointInPolygon(a[0], b) || pointInPolygon(b[0], a);
+    }
+
+    function candidatePositions(placed, gap) {
+      const pts = [{ x: gap, y: gap }];
+      placed.forEach(p => {
+        pts.push(
+          { x: p.bbox.x1 + gap, y: gap },
+          { x: gap, y: p.bbox.y1 + gap },
+          { x: p.bbox.x1 + gap, y: p.bbox.y0 },
+          { x: p.bbox.x0, y: p.bbox.y1 + gap }
+        );
+      });
+      return pts.filter((p, i, arr) => arr.findIndex(q => Math.abs(q.x - p.x) < 0.01 && Math.abs(q.y - p.y) < 0.01) === i)
+        .sort((a, b) => a.y - b.y || a.x - b.x);
     }
 
     function autoArrangeAll() {
@@ -1519,10 +1589,8 @@
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
       const gap = Math.max(6, Number(el.offsetInput.value) * 2 + 6);
-      let x = gap;
-      let y = gap;
-      let rowH = 0;
       let overflow = 0;
+      const placed = [];
       const arranged = state.items
         .map((item, order) => {
           const fp0 = rotatedFootprint(item, 0);
@@ -1533,25 +1601,51 @@
 
       for (const entry of arranged) {
         const item = entry.item;
-        let candidates = [0, 90].map(rot => ({ rot, fp: rotatedFootprint(item, rot) }));
-        candidates = candidates.sort((a, b) => a.fp.height - b.fp.height || a.fp.width - b.fp.width);
-        let pick = candidates.find(c => x + c.fp.width <= dw - gap);
-        if (!pick) {
-          x = gap;
-          y += rowH + gap;
-          rowH = 0;
-          pick = candidates.find(c => x + c.fp.width <= dw - gap) || candidates.sort((a, b) => a.fp.width - b.fp.width)[0];
+        const rotationOptions = [0, 90, 180, 270].map(rot => ({
+          rot,
+          fp: rotatedFootprint(item, rot),
+          contour: rotatedContour(item, rot)
+        }));
+        let best = null;
+        for (const candidate of candidatePositions(placed, gap)) {
+          for (const option of rotationOptions) {
+            const bbox = {
+              x0: candidate.x,
+              y0: candidate.y,
+              x1: candidate.x + option.fp.width,
+              y1: candidate.y + option.fp.height
+            };
+            if (bbox.x1 > dw - gap || bbox.y1 > dh - gap) continue;
+            const contour = shiftedPoints(option.contour, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
+            const collides = placed.some(p => bboxOverlap(bbox, p.bbox) && polygonsOverlap(contour, p.contour));
+            if (collides) continue;
+            const score = bbox.y1 * 100000 + bbox.x1 * 100 + candidate.y + candidate.x * 0.01;
+            if (!best || score < best.score) best = { ...option, x: candidate.x, y: candidate.y, bbox, contour, score };
+          }
         }
-        if (y + pick.fp.height > dh - gap || x + pick.fp.width > dw - gap) overflow++;
-        placeItemByFootprint(item, x, y, pick.rot, pick.fp);
+
+        if (!best) {
+          overflow++;
+          const option = rotationOptions.sort((a, b) => a.fp.width * a.fp.height - b.fp.width * b.fp.height)[0];
+          const y = placed.reduce((maxY, p) => Math.max(maxY, p.bbox.y1), gap) + gap;
+          const bbox = { x0: gap, y0: y, x1: gap + option.fp.width, y1: y + option.fp.height };
+          best = {
+            ...option,
+            x: gap,
+            y,
+            bbox,
+            contour: shiftedPoints(option.contour, gap - option.fp.x0, y - option.fp.y0)
+          };
+        }
+
+        placeItemByFootprint(item, best.x, best.y, best.rot, best.fp);
         invalidateContourCache(item);
-        x += pick.fp.width + gap;
-        rowH = Math.max(rowH, pick.fp.height);
+        placed.push({ item, bbox: best.bbox, contour: best.contour });
       }
 
       state.selectedId = state.items[0]?.id || null;
       renderAll();
-      showNotice(overflow ? `Auto arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Auto arranged ${state.items.length} item(s).`);
+      showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite arranged ${state.items.length} item(s).`);
     }
 
     function drawLayout() {

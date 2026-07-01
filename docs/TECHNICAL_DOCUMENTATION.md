@@ -153,8 +153,8 @@ The first nesting module uses saved project geometry as its input. It:
 
 - Reads all layout-item contours in millimeters.
 - Includes finger-pull circle extents in the layout footprint.
-- Tries `0` and `90` degree rotations.
-- Uses simple shelf/row packing, largest items first.
+- Tries `0`, `90`, `180`, and `270` degree rotations in the experimental Deepnest-lite branch.
+- Uses simple shelf/row packing on `main`; the Deepnest-lite branch uses contour-aware candidate placement.
 - Respects drawer width and drawer height as the target area.
 - Keeps manual drag/rotate cleanup available after the automatic placement.
 
