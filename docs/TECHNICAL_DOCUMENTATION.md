@@ -11,6 +11,14 @@ Shadow Board DXF Maker converts photos of tools placed on A3 or A4 paper into la
 - `README.md`: short user-facing project overview.
 - `.gitignore`: excludes generated previews and test outputs from Git.
 
+## Hosted App
+
+The current Vercel-hosted app is available at:
+
+https://shadow-board-qlwk.vercel.app/
+
+The app can also run locally by opening `outputs/index.html` directly in a browser.
+
 ## User Workflow
 
 1. Photograph a tool on a white A3 or A4 sheet.
