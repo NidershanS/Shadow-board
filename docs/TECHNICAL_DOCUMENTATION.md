@@ -22,6 +22,19 @@ Shadow Board DXF Maker converts photos of tools placed on A3 or A4 paper into la
 7. Move the blue finger-pull handles.
 8. Export either the full drawer DXF or the selected tool DXF.
 
+## Project Persistence
+
+The app stores the latest project in browser `localStorage` so a refresh can restore the detected tools, drawer layout, finger-pull positions, previews, and settings.
+
+Manual project controls:
+
+- `Save Project`: writes the current project to this browser.
+- `Load Saved`: reloads the browser-saved project.
+- `Export Project`: downloads a portable `shadow_board_project.json`.
+- `Import Project`: loads a previously exported project JSON on the same or another PC.
+
+The project JSON stores detected contours and preview images, not the original uploaded photos. This keeps the app usable after refresh without requiring access to the original image files.
+
 ## Measurement Model
 
 The app uses the detected paper rectangle as the scale reference.
@@ -107,6 +120,7 @@ Selected tool export:
 - Finger-pull circles should overlap the main tool outline; fully separate circles are not intended.
 - The app exports polylines rather than true spline/arc geometry.
 - Browser `file://` security can block automated browser testing, but normal manual use is supported by opening the HTML file directly.
+- Browser save storage has a size limit. For large projects, use `Export Project` to save a portable JSON file.
 
 ## Recommended Photo Setup
 
@@ -115,3 +129,14 @@ Selected tool export:
 - Avoid harsh side lighting.
 - Leave visible white space around the entire tool.
 - For shiny metal tools, diffuse the light or slightly change the camera angle to reduce white reflections.
+
+## Nesting Roadmap
+
+The planned nesting module should use saved project geometry as its input. The first practical version should:
+
+- Read all layout-item contours in millimeters.
+- Try rotations such as `0`, `90`, `180`, and `270` degrees.
+- Respect drawer width, drawer height, and a configurable spacing value.
+- Place tools automatically, then allow manual drag/rotate cleanup.
+
+Deepnest is a useful reference for advanced nesting behavior such as DXF workflows, no-fit polygon placement, common-line merging, and speed-critical geometry. Directly embedding the whole Deepnest desktop project would make this app heavier, so the cleaner route is to build a browser-native nesting module around this app's own contour data.

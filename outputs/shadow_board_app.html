@@ -104,6 +104,11 @@
       border-color: var(--accent-dark);
       background: var(--accent);
     }
+    button.secondary {
+      color: #12351b;
+      border-color: #91b89a;
+      background: #eef9f0;
+    }
     button:disabled {
       cursor: not-allowed;
       opacity: 0.55;
@@ -311,6 +316,15 @@
         </div>
         <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
         <button id="processBtn" class="primary">Process Images</button>
+        <div class="btns">
+          <button id="saveProject" class="secondary">Save Project</button>
+          <button id="loadProject">Load Saved</button>
+        </div>
+        <div class="btns">
+          <button id="exportProject">Export Project</button>
+          <button id="importProject">Import Project</button>
+        </div>
+        <input id="importProjectInput" class="hidden" type="file" accept="application/json,.json">
         <div id="status" class="status">Upload uncropped photos with the tool placed on the selected paper size.</div>
       </div>
 
@@ -368,6 +382,7 @@
       a3: { label: "A3", w: 297, h: 420 }
     };
     const PROC_PX_PER_MM = 5;
+    const PROJECT_STORAGE_KEY = "shadowBoardDxfMaker.project.v1";
     const state = {
       files: [],
       tools: [],
@@ -394,6 +409,11 @@
       spacingInput: document.getElementById("spacingInput"),
       metalRepairInput: document.getElementById("metalRepairInput"),
       paperSize: document.getElementById("paperSize"),
+      saveProject: document.getElementById("saveProject"),
+      loadProject: document.getElementById("loadProject"),
+      exportProject: document.getElementById("exportProject"),
+      importProject: document.getElementById("importProject"),
+      importProjectInput: document.getElementById("importProjectInput"),
       rotInput: document.getElementById("rotInput"),
       downloadLayout: document.getElementById("downloadLayout"),
       downloadSelected: document.getElementById("downloadSelected"),
@@ -419,6 +439,135 @@
       el.toast.classList.remove("hidden");
       clearTimeout(showNotice.timer);
       showNotice.timer = setTimeout(() => el.toast.classList.add("hidden"), 3600);
+    }
+
+    function serializeProject() {
+      return {
+        app: "Shadow Board DXF Maker",
+        version: 1,
+        savedAt: new Date().toISOString(),
+        settings: {
+          paperSize: el.paperSize.value,
+          drawerW: Number(el.drawerW.value),
+          drawerH: Number(el.drawerH.value),
+          offset: Number(el.offsetInput.value),
+          metalRepair: Number(el.metalRepairInput.value),
+          smooth: Number(el.smoothInput.value),
+          spacing: Number(el.spacingInput.value),
+          finger: Number(el.fingerInput.value)
+        },
+        tools: state.tools.map(tool => ({
+          id: tool.id,
+          name: tool.name,
+          points: tool.points,
+          width: tool.width,
+          height: tool.height,
+          defaultPulls: clonePulls(tool.defaultPulls),
+          preview: tool.preview,
+          previewLarge: tool.previewLarge
+        })),
+        items: state.items.map(item => ({
+          id: item.id,
+          toolId: item.toolId,
+          x: item.x,
+          y: item.y,
+          rot: item.rot,
+          pulls: clonePulls(itemPulls(item))
+        })),
+        selectedId: state.selectedId
+      };
+    }
+
+    function applyProject(project) {
+      if (!project || !Array.isArray(project.tools) || !Array.isArray(project.items)) {
+        throw new Error("This is not a valid Shadow Board project file.");
+      }
+      const settings = project.settings || {};
+      el.paperSize.value = settings.paperSize || "a4";
+      el.drawerW.value = settings.drawerW || 560;
+      el.drawerH.value = settings.drawerH || 390;
+      el.offsetInput.value = settings.offset ?? 2;
+      el.metalRepairInput.value = settings.metalRepair ?? 7;
+      el.smoothInput.value = settings.smooth ?? 3.5;
+      el.spacingInput.value = settings.spacing ?? 2.5;
+      el.fingerInput.value = settings.finger ?? 14;
+      state.files = [];
+      state.tools = project.tools.map(tool => ({
+        id: String(tool.id),
+        name: String(tool.name || "Tool"),
+        points: Array.isArray(tool.points) ? tool.points : [],
+        width: Number(tool.width) || 0,
+        height: Number(tool.height) || 0,
+        defaultPulls: clonePulls(tool.defaultPulls || []),
+        preview: tool.preview || "",
+        previewLarge: tool.previewLarge || tool.preview || ""
+      })).filter(tool => tool.points.length > 2);
+      const toolIds = new Set(state.tools.map(tool => tool.id));
+      state.items = project.items.map(item => ({
+        id: String(item.id),
+        toolId: String(item.toolId),
+        x: Number(item.x) || 0,
+        y: Number(item.y) || 0,
+        rot: Number(item.rot) || 0,
+        pulls: clonePulls(item.pulls || [])
+      })).filter(item => toolIds.has(item.toolId));
+      state.selectedId = state.items.some(item => item.id === project.selectedId) ? project.selectedId : (state.items[0]?.id || null);
+      state.drag = null;
+      invalidateContourCache();
+      fitView();
+      renderAll();
+    }
+
+    function saveProject(auto = false) {
+      try {
+        localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(serializeProject()));
+        if (!auto) showNotice("Project saved in this browser.");
+        return true;
+      } catch (err) {
+        showNotice("Could not save project. Try Export Project instead.");
+        console.error(err);
+        return false;
+      }
+    }
+
+    function scheduleAutosave() {
+      clearTimeout(scheduleAutosave.timer);
+      scheduleAutosave.timer = setTimeout(() => {
+        if (state.tools.length || state.items.length) saveProject(true);
+      }, 700);
+    }
+
+    function loadSavedProject() {
+      const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
+      if (!raw) {
+        showNotice("No saved project found in this browser.");
+        return;
+      }
+      try {
+        applyProject(JSON.parse(raw));
+        showNotice("Saved project loaded.");
+      } catch (err) {
+        showNotice("Could not load saved project: " + err.message);
+      }
+    }
+
+    function exportProjectFile() {
+      download("shadow_board_project.json", JSON.stringify(serializeProject(), null, 2), "application/json");
+      showNotice("Project JSON exported.");
+    }
+
+    function importProjectFile(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          applyProject(JSON.parse(String(reader.result || "")));
+          saveProject(true);
+          showNotice("Project imported and saved in this browser.");
+        } catch (err) {
+          showNotice("Could not import project: " + err.message);
+        }
+      };
+      reader.readAsText(file);
     }
 
     function showPreview(tool) {
@@ -1290,6 +1439,7 @@
       drawLayout();
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
+      scheduleAutosave();
     }
 
     function hitTest(world) {
@@ -1328,8 +1478,8 @@
       return text.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
     }
 
-    function download(name, text) {
-      const blob = new Blob([text], { type: "application/dxf" });
+    function download(name, text, type = "application/dxf") {
+      const blob = new Blob([text], { type });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = name;
@@ -1395,6 +1545,16 @@
     el.fileInput.addEventListener("change", () => {
       state.files = Array.from(el.fileInput.files || []);
       setStatus(`${state.files.length} image(s) ready.`);
+    });
+
+    el.saveProject.addEventListener("click", () => saveProject(false));
+    el.loadProject.addEventListener("click", loadSavedProject);
+    el.exportProject.addEventListener("click", exportProjectFile);
+    el.importProject.addEventListener("click", () => el.importProjectInput.click());
+    el.importProjectInput.addEventListener("change", () => {
+      const file = el.importProjectInput.files && el.importProjectInput.files[0];
+      if (file) importProjectFile(file);
+      el.importProjectInput.value = "";
     });
 
     el.processBtn.addEventListener("click", async () => {
@@ -1517,7 +1677,19 @@
       if (ev.key === "Escape" && !el.previewModal.classList.contains("hidden")) hidePreview();
     });
 
-    fitView();
+    try {
+      const rawProject = localStorage.getItem(PROJECT_STORAGE_KEY);
+      if (rawProject) {
+        applyProject(JSON.parse(rawProject));
+        setStatus("Restored saved project from this browser.");
+      } else {
+        fitView();
+      }
+    } catch (err) {
+      console.error(err);
+      fitView();
+      setStatus("Could not restore saved project. Start a new project or import a project JSON.");
+    }
   </script>
 </body>
 </html>
