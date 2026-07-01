@@ -31,10 +31,13 @@ Manual project controls:
 
 - `Save Project`: writes the current project to this browser.
 - `Load Saved`: reloads the browser-saved project.
+- `New Project / Clear Saved`: removes the browser-saved project and resets the current workspace.
 - `Export Project`: downloads a portable `shadow_board_project.json`.
 - `Import Project`: loads a previously exported project JSON on the same or another PC.
 
 The project JSON stores detected contours and preview images, not the original uploaded photos. This keeps the app usable after refresh without requiring access to the original image files.
+
+Browser save and exported project files are separate. Clearing the saved browser project does not delete any `.json` project file already downloaded to the PC.
 
 ## Measurement Model
 

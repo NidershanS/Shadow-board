@@ -320,6 +320,7 @@
           <button id="saveProject" class="secondary">Save Project</button>
           <button id="loadProject">Load Saved</button>
         </div>
+        <button id="newProject">New Project / Clear Saved</button>
         <div class="btns">
           <button id="exportProject">Export Project</button>
           <button id="importProject">Import Project</button>
@@ -412,6 +413,7 @@
       paperSize: document.getElementById("paperSize"),
       saveProject: document.getElementById("saveProject"),
       loadProject: document.getElementById("loadProject"),
+      newProject: document.getElementById("newProject"),
       exportProject: document.getElementById("exportProject"),
       importProject: document.getElementById("importProject"),
       importProjectInput: document.getElementById("importProjectInput"),
@@ -552,6 +554,22 @@
       } catch (err) {
         showNotice("Could not load saved project: " + err.message);
       }
+    }
+
+    function newProject() {
+      const hasWork = state.tools.length || state.items.length || localStorage.getItem(PROJECT_STORAGE_KEY);
+      if (hasWork && !window.confirm("Start a new project and clear the saved browser project? Export Project first if you need a backup.")) return;
+      localStorage.removeItem(PROJECT_STORAGE_KEY);
+      clearTimeout(scheduleAutosave.timer);
+      state.files = [];
+      state.tools = [];
+      state.items = [];
+      state.selectedId = null;
+      state.drag = null;
+      el.fileInput.value = "";
+      fitView();
+      renderAll();
+      showNotice("New project started. Browser-saved project cleared.");
     }
 
     function exportProjectFile() {
@@ -1698,6 +1716,7 @@
 
     el.saveProject.addEventListener("click", () => saveProject(false));
     el.loadProject.addEventListener("click", loadSavedProject);
+    el.newProject.addEventListener("click", newProject);
     el.exportProject.addEventListener("click", exportProjectFile);
     el.importProject.addEventListener("click", () => el.importProjectInput.click());
     el.importProjectInput.addEventListener("change", () => {
