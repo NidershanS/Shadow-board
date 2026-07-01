@@ -122,7 +122,7 @@
     }
     .toolbar {
       display: grid;
-      grid-template-columns: repeat(6, minmax(110px, 1fr));
+      grid-template-columns: repeat(7, minmax(110px, 1fr));
       gap: 10px;
       align-items: end;
       background: var(--panel);
@@ -339,6 +339,7 @@
         <label>Drawer width mm<input id="drawerW" type="number" value="560" min="50" step="1"></label>
         <label>Drawer height mm<input id="drawerH" type="number" value="390" min="50" step="1"></label>
         <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
+        <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
         <button id="autoArrange">Auto Arrange All</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
         <button id="fitView">Fit View</button>
@@ -413,6 +414,7 @@
       metalRepairInput: document.getElementById("metalRepairInput"),
       paperSize: document.getElementById("paperSize"),
       projectName: document.getElementById("projectName"),
+      arrangeSpacingInput: document.getElementById("arrangeSpacingInput"),
       saveProject: document.getElementById("saveProject"),
       loadProject: document.getElementById("loadProject"),
       newProject: document.getElementById("newProject"),
@@ -471,6 +473,7 @@
           metalRepair: Number(el.metalRepairInput.value),
           smooth: Number(el.smoothInput.value),
           spacing: Number(el.spacingInput.value),
+          arrangeSpacing: Number(el.arrangeSpacingInput.value),
           finger: Number(el.fingerInput.value)
         },
         tools: state.tools.map(tool => ({
@@ -508,6 +511,7 @@
       el.metalRepairInput.value = settings.metalRepair ?? 7;
       el.smoothInput.value = settings.smooth ?? 3.5;
       el.spacingInput.value = settings.spacing ?? 2.5;
+      el.arrangeSpacingInput.value = settings.arrangeSpacing ?? 10;
       el.fingerInput.value = settings.finger ?? 14;
       state.files = [];
       state.tools = project.tools.map(tool => ({
@@ -1532,6 +1536,10 @@
       return a.x0 <= b.x1 && a.x1 >= b.x0 && a.y0 <= b.y1 && a.y1 >= b.y0;
     }
 
+    function expandBbox(b, amount) {
+      return { x0: b.x0 - amount, y0: b.y0 - amount, x1: b.x1 + amount, y1: b.y1 + amount };
+    }
+
     function orientation(a, b, c) {
       const v = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
       return Math.abs(v) < 1e-7 ? 0 : (v > 0 ? 1 : 2);
@@ -1567,6 +1575,31 @@
       return pointInPolygon(a[0], b) || pointInPolygon(b[0], a);
     }
 
+    function pointSegmentDistance(p, a, b) {
+      const q = closestPointOnSegment(p, a, b);
+      return Math.hypot(p.x - q.x, p.y - q.y);
+    }
+
+    function segmentDistance(a, b, c, d) {
+      if (segmentsIntersect(a, b, c, d)) return 0;
+      return Math.min(
+        pointSegmentDistance(a, c, d),
+        pointSegmentDistance(b, c, d),
+        pointSegmentDistance(c, a, b),
+        pointSegmentDistance(d, a, b)
+      );
+    }
+
+    function polygonsTooClose(a, b, spacingMm) {
+      if (polygonsOverlap(a, b)) return true;
+      for (let i = 0; i < a.length - 1; i++) {
+        for (let j = 0; j < b.length - 1; j++) {
+          if (segmentDistance(a[i], a[i + 1], b[j], b[j + 1]) < spacingMm) return true;
+        }
+      }
+      return false;
+    }
+
     function candidatePositions(placed, gap) {
       const pts = [{ x: gap, y: gap }];
       placed.forEach(p => {
@@ -1588,7 +1621,7 @@
       }
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
-      const gap = Math.max(6, Number(el.offsetInput.value) * 2 + 6);
+      const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
       let overflow = 0;
       const placed = [];
       const arranged = state.items
@@ -1617,7 +1650,7 @@
             };
             if (bbox.x1 > dw - gap || bbox.y1 > dh - gap) continue;
             const contour = shiftedPoints(option.contour, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
-            const collides = placed.some(p => bboxOverlap(bbox, p.bbox) && polygonsOverlap(contour, p.contour));
+            const collides = placed.some(p => bboxOverlap(expandBbox(bbox, gap), p.bbox) && polygonsTooClose(contour, p.contour, gap));
             if (collides) continue;
             const score = bbox.y1 * 100000 + bbox.x1 * 100 + candidate.y + candidate.x * 0.01;
             if (!best || score < best.score) best = { ...option, x: candidate.x, y: candidate.y, bbox, contour, score };
@@ -1932,9 +1965,10 @@
       drawLayout();
     });
 
-    [el.offsetInput, el.spacingInput, el.smoothInput].forEach(input => {
+    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();
+        scheduleAutosave();
       });
     });
 

@@ -153,6 +153,7 @@ The first nesting module uses saved project geometry as its input. It:
 
 - Reads all layout-item contours in millimeters.
 - Includes finger-pull circle extents in the layout footprint.
+- Uses `Arrange spacing mm` as the requested contour-to-contour clearance between nested tools.
 - Tries `0`, `90`, `180`, and `270` degree rotations in the experimental Deepnest-lite branch.
 - Uses simple shelf/row packing on `main`; the Deepnest-lite branch uses contour-aware candidate placement.
 - Respects drawer width and drawer height as the target area.
