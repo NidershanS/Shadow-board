@@ -348,7 +348,7 @@
         </div>
         <div class="inspector">
           <h2>Arrange</h2>
-          <div class="status">Drag shapes on the drawer. Select a tool to rotate it, then drag the blue pull circles.</div>
+          <div class="status">Drag shapes on the drawer. Select a tool to rotate it, then drag the blue pull circles along the tool contour.</div>
           <div class="btns">
             <button id="rotateLeft">Rotate -15</button>
             <button id="rotateRight">Rotate +15</button>
@@ -1143,7 +1143,9 @@
       }
 
       let outline = traceMask(mask, w, h);
-      outline = smoothContour(outline, Number(el.spacingInput.value), Number(el.smoothInput.value));
+      const maxPullR = Math.max(0, ...pulls.map(p => p.r || 0));
+      const mergeSmooth = Math.max(Number(el.smoothInput.value), Math.min(9, maxPullR * 0.32));
+      outline = smoothContour(outline, Number(el.spacingInput.value), mergeSmooth);
       const points = outline.map(p => ({ x: x0 + p.x / PROC_PX_PER_MM, y: y0 + p.y / PROC_PX_PER_MM }));
       item._combinedContour = { key: cacheKey, points };
       return points;
@@ -1204,23 +1206,86 @@
         points: norm.points,
         width: norm.width,
         height: norm.height,
-        defaultPulls: defaultFingerPulls(norm.width, norm.height, Number(el.fingerInput.value)),
+        defaultPulls: defaultFingerPulls(norm.points, norm.width, norm.height, Number(el.fingerInput.value)),
         preview: previewCanvas(page, contour, 170, 220),
         previewLarge: previewCanvas(page, contour, 760, 980)
       };
       return tool;
     }
 
-    function defaultFingerPulls(width, height, radius) {
+    function polygonCentroid(points) {
+      const pts = points[0] && points[points.length - 1] && points[0].x === points[points.length - 1].x && points[0].y === points[points.length - 1].y
+        ? points.slice(0, -1)
+        : points;
+      let x = 0, y = 0;
+      pts.forEach(p => { x += p.x; y += p.y; });
+      return { x: x / Math.max(1, pts.length), y: y / Math.max(1, pts.length) };
+    }
+
+    function closestPointOnSegment(p, a, b) {
+      const vx = b.x - a.x, vy = b.y - a.y;
+      const len2 = vx * vx + vy * vy;
+      const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0;
+      return { x: a.x + vx * t, y: a.y + vy * t, t };
+    }
+
+    function closestPointOnContour(p, points) {
+      let best = null;
+      for (let i = 0; i < points.length - 1; i++) {
+        const q = closestPointOnSegment(p, points[i], points[i + 1]);
+        const d2 = (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
+        if (!best || d2 < best.d2) best = { ...q, index: i, d2 };
+      }
+      return best || { x: p.x, y: p.y, index: 0, t: 0, d2: 0 };
+    }
+
+    function pullFromContourPoint(point, radius, points) {
+      const c = polygonCentroid(points);
+      let nx = point.x - c.x;
+      let ny = point.y - c.y;
+      const n = Math.hypot(nx, ny) || 1;
+      nx /= n;
+      ny /= n;
+      const offset = radius * 0.55;
+      return {
+        x: point.x + nx * offset,
+        y: point.y + ny * offset,
+        r: radius,
+        anchorX: point.x,
+        anchorY: point.y
+      };
+    }
+
+    function snapPullToContour(pull, item, target) {
+      const tool = getTool(item.toolId);
+      const nearest = closestPointOnContour(target, tool.points);
+      const snapped = pullFromContourPoint(nearest, pull.r, tool.points);
+      pull.x = snapped.x;
+      pull.y = snapped.y;
+      pull.anchorX = snapped.anchorX;
+      pull.anchorY = snapped.anchorY;
+      return pull;
+    }
+
+    function normalizePull(pull, item) {
+      const target = Number.isFinite(pull.anchorX) && Number.isFinite(pull.anchorY)
+        ? { x: pull.anchorX, y: pull.anchorY }
+        : { x: pull.x, y: pull.y };
+      return snapPullToContour(pull, item, target);
+    }
+
+    function defaultFingerPulls(points, width, height, radius) {
       if (radius <= 0) return [];
+      const left = closestPointOnContour({ x: 0, y: height * 0.70 }, points);
+      const right = closestPointOnContour({ x: width, y: height * 0.70 }, points);
       return [
-        { x: width + radius * 0.55, y: height * 0.70, r: radius },
-        { x: -radius * 0.55, y: height * 0.70, r: radius }
+        pullFromContourPoint(right, radius, points),
+        pullFromContourPoint(left, radius, points)
       ];
     }
 
     function clonePulls(pulls) {
-      return (pulls || []).map(p => ({ x: p.x, y: p.y, r: p.r }));
+      return (pulls || []).map(p => ({ x: p.x, y: p.y, r: p.r, anchorX: p.anchorX, anchorY: p.anchorY }));
     }
 
     function addToolToLayout(tool) {
@@ -1372,6 +1437,9 @@
     function itemPulls(item) {
       const tool = getTool(item.toolId);
       if (!item.pulls) item.pulls = clonePulls(tool.defaultPulls);
+      item.pulls.forEach(pull => {
+        if (!Number.isFinite(pull.anchorX) || !Number.isFinite(pull.anchorY)) normalizePull(pull, item);
+      });
       return item.pulls;
     }
 
@@ -1692,8 +1760,7 @@
         if (state.drag.mode === "pull") {
           const local = localPointFromWorld(world, item);
           const pulls = itemPulls(item);
-          pulls[state.drag.pullIndex].x = local.x;
-          pulls[state.drag.pullIndex].y = local.y;
+          snapPullToContour(pulls[state.drag.pullIndex], item, local);
           invalidateContourCache(item);
         } else {
           item.x = world.x - state.drag.dx;

@@ -82,12 +82,16 @@ Each layout item starts with two finger-pull handles. They are shown as blue cir
 
 Important behavior:
 
+- Pull handles are pinned to the nearest point on the detected tool contour.
+- Dragging a pull handle slides it along the contour instead of allowing it to float freely.
+- The pull-circle center is offset slightly outward from the contour, so the circle always intersects the main tool shape.
 - The circles are not exported as separate DXF circles.
 - The drawer canvas draws the tool outline and pull circles separately so editing stays fast.
 - On export, the app unions the tool contour and finger-pull circles into one raster mask.
 - That combined mask is retraced into one continuous `LWPOLYLINE` for the DXF.
+- Export smoothing is raised around pull-circle merges to create a larger rounded transition between the pull and the main contour.
 
-For clean results, each pull handle should overlap the tool contour. If a pull circle is moved far away from the tool, the union may become disconnected and the tracer will keep the largest closed contour.
+Because the pull handles are contour-pinned, the exported union should stay connected. If importing an older project, the app projects older free-position pull handles back onto the nearest tool contour.
 
 ## Performance Notes
 

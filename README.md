@@ -12,6 +12,8 @@ Projects auto-save in the browser. Use **Export Project** to save a portable `.j
 
 Use **Auto Arrange All** after bulk import to lay out all detected tools inside the drawer automatically. The first version uses row packing with 0/90 degree rotation trials; manual cleanup is still available by dragging and rotating tools.
 
+Finger-pull circles are pinned to the detected tool contour. Dragging a pull moves it along the contour, and export merges it into the tool as one rounded continuous cutout.
+
 ## Documentation
 
 See `docs/TECHNICAL_DOCUMENTATION.md` for the processing pipeline, measurement model, DXF export behavior, performance notes, and known limitations.
