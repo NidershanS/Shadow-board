@@ -1926,6 +1926,119 @@
           return { item, order, area, width: Math.max(fp0.width, fp90.width), height: Math.max(fp0.height, fp90.height), aspect };
         });
 
+      function makePlacement(entry, option, x, y) {
+        const bbox = { x0: x, y0: y, x1: x + option.fp.width, y1: y + option.fp.height };
+        return {
+          entry,
+          item: entry.item,
+          rot: option.rot,
+          fp: option.fp,
+          x,
+          y,
+          bbox,
+          polygons: shiftedPolygons(option.polygons, x - option.fp.x0, y - option.fp.y0),
+          optionPolygons: option.polygons
+        };
+      }
+
+      function scorePlacementSet(placed) {
+        const used = layoutBounds(placed);
+        const waste = (used.width * used.height) - placed.reduce((sum, p) => sum + p.entry.area, 0);
+        return used.height * 100000 + used.width * 800 + waste;
+      }
+
+      function safeShelfArrange(arranged) {
+        const placed = [];
+        let x = gap;
+        let y = gap;
+        let rowH = 0;
+        for (const entry of arranged) {
+          const options = [0, 90, 180, 270].map(rot => ({
+            rot,
+            fp: rotatedFootprint(entry.item, rot),
+            polygons: rotatedCollisionPolygons(entry.item, rot)
+          })).sort((a, b) => a.fp.height - b.fp.height || a.fp.width - b.fp.width);
+
+          let best = null;
+          let bestNext = null;
+          for (const option of options) {
+            const sameRowX = x;
+            const sameRowY = y;
+            if (sameRowX + option.fp.width <= dw - gap + 0.01 && sameRowY + option.fp.height <= dh - gap + 0.01) {
+              const test = makePlacement(entry, option, sameRowX, sameRowY);
+              if (placementFits(test, placed, gap, dw, dh)) {
+                best = test;
+                bestNext = { x: sameRowX + option.fp.width + gap, y: sameRowY, rowH: Math.max(rowH, option.fp.height) };
+                break;
+              }
+            }
+          }
+
+          if (!best) {
+            const nextY = y + rowH + gap;
+            for (const option of options) {
+              if (gap + option.fp.width <= dw - gap + 0.01 && nextY + option.fp.height <= dh - gap + 0.01) {
+                const test = makePlacement(entry, option, gap, nextY);
+                if (placementFits(test, placed, gap, dw, dh)) {
+                  best = test;
+                  bestNext = { x: gap + option.fp.width + gap, y: nextY, rowH: option.fp.height };
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!best) return null;
+          placed.push(best);
+          x = bestNext.x;
+          y = bestNext.y;
+          rowH = bestNext.rowH;
+        }
+        compactPlacements(placed, gap, dw, dh, shouldStop);
+        return { placed, overflow: 0, score: scorePlacementSet(placed), source: "safe shelf" };
+      }
+
+      function fastBboxArrange(arranged) {
+        const placed = [];
+        const bboxTooClose = (a, b) =>
+          a.x0 < b.x1 + gap - 0.01 &&
+          a.x1 > b.x0 - gap + 0.01 &&
+          a.y0 < b.y1 + gap - 0.01 &&
+          a.y1 > b.y0 - gap + 0.01;
+        for (const entry of arranged) {
+          const options = [0, 90, 180, 270].map(rot => ({
+            rot,
+            fp: rotatedFootprint(entry.item, rot),
+            polygons: rotatedCollisionPolygons(entry.item, rot)
+          }));
+          const xs = [gap];
+          const ys = [gap];
+          placed.forEach(p => {
+            xs.push(p.bbox.x0, p.bbox.x1 + gap);
+            ys.push(p.bbox.y0, p.bbox.y1 + gap);
+          });
+          const candidates = [];
+          ys.filter((y, i, arr) => arr.findIndex(v => Math.abs(v - y) < 0.01) === i).forEach(y => {
+            xs.filter((x, i, arr) => arr.findIndex(v => Math.abs(v - x) < 0.01) === i).forEach(x => candidates.push({ x, y }));
+          });
+          let best = null;
+          for (const option of options) {
+            for (const candidate of candidates) {
+              const test = makePlacement(entry, option, candidate.x, candidate.y);
+              if (test.bbox.x1 > dw - gap + 0.01 || test.bbox.y1 > dh - gap + 0.01) continue;
+              const blocked = placed.some(p => bboxTooClose(test.bbox, p.bbox));
+              if (blocked) continue;
+              const score = scorePlacementSet([...placed, test]) + test.bbox.y0 * 30 + test.bbox.x0;
+              if (!best || score < best.score) best = { ...test, score };
+            }
+          }
+          if (!best) return null;
+          placed.push(best);
+        }
+        compactPlacements(placed, gap, dw, dh, shouldStop);
+        return { placed, overflow: 0, score: scorePlacementSet(placed), source: "fast baseline" };
+      }
+
       async function arrangeOrder(arranged, orderIndex, totalOrders) {
         const placed = [];
         for (let entryIndex = 0; entryIndex < arranged.length; entryIndex++) {
@@ -2008,11 +2121,11 @@
           0
         );
         if (overflowArea > 0) return null;
-        const waste = (used.width * used.height) - placed.reduce((sum, p) => sum + p.entry.area, 0);
         return {
           placed,
           overflow: 0,
-          score: used.height * 100000 + used.width * 800 + waste
+          score: scorePlacementSet(placed),
+          source: "dense"
         };
       }
 
@@ -2024,7 +2137,10 @@
           [...entries].sort((a, b) => b.aspect - a.aspect || b.area - a.area),
           [...entries].sort((a, b) => a.order - b.order)
         ];
-        let result = null;
+        updateBusy("Arranging contours...", "Creating fast inside-board baseline layout.", 4);
+        await nextFrame();
+        const baselineOrder = [...entries].sort((a, b) => b.height - a.height || b.area - a.area);
+        let result = fastBboxArrange(baselineOrder) || safeShelfArrange(baselineOrder);
         for (let orderIndex = 0; orderIndex < orders.length; orderIndex++) {
           const order = orders[orderIndex];
           if (shouldStop() && result) {
@@ -2054,7 +2170,7 @@
         state.selectedId = state.items[0]?.id || null;
         renderAll();
         if (stoppedByTime) {
-          showNotice(`Deepnest-lite stopped at ${maxSeconds}s and applied the best complete layout found.`);
+          showNotice(`Deepnest-lite stopped at ${maxSeconds}s and applied the best complete ${result.source} layout found.`);
         } else {
           showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite densely arranged ${state.items.length} item(s).`);
         }
