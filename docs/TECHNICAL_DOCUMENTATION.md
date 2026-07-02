@@ -22,14 +22,14 @@ The app can also run locally by opening `outputs/index.html` directly in a brows
 ## User Workflow
 
 1. Photograph a tool on a white A3 or A4 sheet.
-2. Upload one or more photos in the app.
+2. Drop one or more photos onto the page, or use `Choose Files`. Detection starts automatically once files are selected or dropped; `Detect Contours` remains available to re-run manually.
 3. Select paper size: A4 or A3. The app supports portrait and landscape photos.
-4. Process images to detect the paper, segment the tool, smooth the outline, and apply the cut offset.
-5. Preview each detected tool contour.
-6. Add tools to the drawer layout and drag/rotate them into position.
-7. Move the blue finger-pull handles.
-8. Use `Auto Arrange All` to lay out bulk imports, if needed.
-9. Export either the full drawer DXF or the selected tool DXF.
+4. The app detects the paper, segments the tool, smooths the outline, and applies the cut offset.
+5. Preview each detected tool contour in the review modal. Rename the tool, and tune `Offset mm`, `Gap repair mm`, and `Smooth mm` directly in the modal — changing a value automatically re-detects the contour after a short pause.
+6. Accept the contour. Accepting adds the tool straight to the drawer at a non-overlapping position; the modal auto-advances to the next unreviewed contour.
+7. Drag/rotate tools into position, or use `Arrange Now` to auto-nest everything (see Nesting below).
+8. Move the blue finger-pull handles; dragging a tool over another highlights the overlap in red.
+9. Export the full drawer as DXF or SVG, or export the selected tool alone as DXF.
 
 ## Project Persistence
 
@@ -115,20 +115,31 @@ The app also uses caching so repeated exports do not redo unchanged work. The co
 - Offset, smoothing, or point spacing changes.
 - A DXF export needs the current contour.
 
+`combinedLocalPoints`, which rasterizes the tool contour plus finger pulls before retracing, fills the raster with a scanline polygon fill (evaluating polygon edges once per scanline row) and direct circle stamping for pull handles, rather than testing every raster pixel against the full contour point-in-polygon test. On a real multi-hundred-point contour this is roughly 60x faster than a naive per-pixel test and keeps `validateLayout` (which calls it for every layout item) cheap enough to run on every render.
+
+`autoArrangeAll` yields to the browser between placement steps so the busy overlay stays responsive and `Stop and keep best layout` remains clickable during a long search. The yield (`nextFrame`) uses `requestAnimationFrame` while the tab is visible, but falls back to a `MessageChannel` post when `document.hidden` is true, since background tabs throttle `requestAnimationFrame` and `setTimeout` to roughly once per second — without the fallback, an arrange started just before the tab loses focus would spend nearly its entire time budget asleep instead of searching.
+
 ## DXF Export
 
-The DXF writer emits simple `LWPOLYLINE` entities.
+The DXF writer emits a minimal `HEADER` section (`$INSUNITS = 4` for millimeters, `$MEASUREMENT = 1` metric) followed by `LWPOLYLINE` entities. Declaring units explicitly avoids CAM software guessing inches on import.
+
+Canvas coordinates are Y-down (screen space); DXF is Y-up. Export flips Y (`y' = drawerHeight - y` for the drawer export, `y' = boundsTop - y` for a single selected-tool export) so the exported geometry is not mirrored vertically when opened in CAD/CAM tools.
 
 Full drawer export:
 
 - Adds a `DRAWER` rectangle layer.
-- Adds one `CUT_*` layer per arranged tool.
+- Adds one `CUT_*` layer per arranged tool, named from the tool's (possibly renamed) label.
 - Each tool is exported in its arranged drawer position and rotation.
+- Export is blocked (with the reasons listed in the export report) until the layout has no overlaps, no out-of-drawer tools, and no unreviewed contours in the drawer.
 
 Selected tool export:
 
 - Exports the selected tool as one local `CUT` contour.
 - Includes moved finger-pull handles as part of the same contour.
+
+## SVG Export
+
+The drawer export modal also offers `Download SVG`, generating a millimeter-true `<svg>` (`viewBox="0 0 drawerW drawerH"`, `width`/`height` in `mm`) with one `<path>` per tool cutout plus a drawer boundary rectangle. This targets laser-cutter software (Lightburn, xTool Creative Space, etc.) that consumes SVG rather than DXF.
 
 ## Known Limitations
 
@@ -136,6 +147,8 @@ Selected tool export:
 - Strong shadows touching the tool can become part of the contour.
 - Finger-pull circles should overlap the main tool outline; fully separate circles are not intended.
 - The app exports polylines rather than true spline/arc geometry.
+- Paper detection crops to a bounding box only; it does not perspective-correct an angled photo, so a photo not taken roughly square-on to the paper will produce a dimensionally distorted contour.
+- The nesting search uses a raster approximation of the no-fit polygon (see Nesting), not exact Minkowski-sum boundaries, so extremely thin concave openings may be missed at the default 3&nbsp;mm raster resolution.
 - Browser `file://` security can block automated browser testing, but normal manual use is supported by opening the HTML file directly.
 - Browser save storage has a size limit. For large projects, use `Export Project` to save a portable JSON file.
 
@@ -147,30 +160,39 @@ Selected tool export:
 - Leave visible white space around the entire tool.
 - For shiny metal tools, diffuse the light or slightly change the camera angle to reduce white reflections.
 
-## Nesting Roadmap
+## Nesting
 
-The first nesting module uses saved project geometry as its input. It:
+`Arrange Now` runs a multi-strategy nesting search over saved project geometry (`autoArrangeAll`):
 
-- Reads all layout-item contours in millimeters.
-- Includes finger-pull circle extents in the layout footprint.
-- Includes finger-pull circles in collision and spacing checks.
-- Uses `Arrange spacing mm` as the requested contour-to-contour clearance between nested tools and pull circles.
-- Tries `0`, `90`, `180`, and `270` degree rotations in the experimental Deepnest-lite branch.
-- Uses simple shelf/row packing on `main`; the Deepnest-lite branch uses contour-aware candidate placement.
-- Builds candidate locations from placed-part edges so later tools can fill open gaps rather than only starting new rows.
-- Respects drawer width and drawer height as the target area.
-- Keeps manual drag/rotate cleanup available after the automatic placement.
-- Provides zoom controls for inspecting the drawer without changing the drawer dimensions; Fit View keeps a clean top-left board margin.
-- Shows a busy overlay while the Deepnest-lite arrange pass is calculating, so large layouts do not appear frozen.
+- Reads all layout-item contours in millimeters, using the exact polygon (not just the bounding box) for collision checks.
+- Includes finger-pull circles in the layout footprint, in collision checks, and in spacing checks alongside the tool contour.
+- Uses `Arrange spacing mm` as the requested clearance between nested tools and pull circles.
+- Uses `Arrange rotation` to pick the rotation set: **Tidy** (`0, 90, 180, 270`, for a visually neat drawer) or **Dense** (12 steps of 30 degrees, for maximum packing).
+- Locked items (`Lock Position`) are excluded from placement and treated as fixed obstacles for everything else.
+- Tries five orderings (by area, by height, by width, by aspect ratio, and insertion order) plus a fast bounding-box baseline and a shelf-packing fallback, and keeps whichever complete layout scores best (packed height, then width, then wasted area).
+- Runs against a wall-clock time budget (`Arrange time limit sec`), shown live in the busy overlay (`Pass X/Y, item N/M, orientation Z deg`). The best complete layout found is applied even if the budget runs out before every ordering finishes.
+- **Stop and keep best layout**: a button in the busy overlay lets the user end the search early; the canvas already shows the best layout found so far, since the layout is applied live every time a better ordering completes, not only at the end.
 
-This is intentionally the first practical step, not final advanced nesting.
+### Candidate placement: raster no-fit polygon (NFP)
 
-Deepnest is a useful reference for advanced nesting behavior such as DXF workflows, no-fit polygon placement, common-line merging, and speed-critical geometry. Directly embedding the whole Deepnest desktop project would make this app heavier, so the cleaner route is to build a browser-native nesting module around this app's own contour data.
+Early versions only tried candidate positions derived from bounding-box corners of already-placed parts, which finds tight rectangular packing but essentially never nests one part *inside* a concavity of another (a bar sliding into the mouth of a C-shaped bracket, for example). The nesting search now generates candidates from an approximate no-fit polygon instead:
 
-Future improvements can add:
+1. **`buildOccupancy`** rasterizes every already-placed part (contour plus finger-pull circles) into an occupancy grid at `NEST_RASTER_MM` resolution (3&nbsp;mm), then dilates the occupied cells by the arrange-spacing gap so the raster already encodes the clearance requirement.
+2. **`nfpCandidates`** rasterizes the candidate part for a given rotation, then slides it over the occupancy grid (checking only the part's own boundary cells against the grid, which is cheap) to find every position where it fits without collision. Only the *contact band* — positions within a couple of raster cells of touching a wall or another part — is kept as candidates; this is the practical equivalent of the true NFP boundary, where dense and interlocking placements live.
+3. Raster candidates are merged with the older bounding-box-corner candidates (`mergedCandidates`) and de-duplicated.
+4. Every candidate, regardless of source, is still scored with cheap bounding-box math first; only candidates that could possibly beat the current best are checked with the **exact polygon-distance collision test** (`placementFits` / `polygonSetsTooClose`), so the raster step is a proposer only — it never overrides exact geometry. Candidates are scored before the exact check and evaluated best-score-first, stopping at the first exact-geometry pass, which keeps the expensive polygon math off the majority of candidates.
 
-- More rotation candidates, such as `15` or `30` degree steps.
-- Collision checks against the actual contour instead of only the layout footprint.
-- No-fit polygon placement.
-- Better scoring for tight drawer packing.
+This is not a full Minkowski-difference NFP implementation (no true polygon-boundary sliding, no genetic-algorithm ordering search of the kind Deepnest uses) but it recovers the concave-nesting behavior that a pure bounding-box candidate generator cannot produce, at a cost proportional to raster resolution rather than polygon complexity.
+
+### Manual editing after auto-arrange
+
+- Manual drag/rotate cleanup remains available after automatic placement; dragging a tool over another paints the overlapping contour red immediately (`updateDragOverlap`, exact polygon-distance check against every other placed item).
+- Zoom (buttons or mouse wheel toward the cursor) and pan (drag on empty canvas) let you inspect the drawer without changing its dimensions; `Fit View` recenters with a clean top-left margin.
+- The export report panel and the `Arrange Now` busy overlay both surface the same validation used to gate DXF/SVG export, so overlap or out-of-bounds issues are visible before an export attempt.
+
+### Possible future improvements
+
+- True Minkowski-sum NFP (e.g. via `clipper2` or a ported SVGnest NFP generator) for exact boundary sliding instead of raster approximation.
+- A genetic/evolutionary search over part ordering and rotation, replacing the fixed set of heuristic orderings.
+- Moving the search to a Web Worker so very large layouts (dozens of tools) do not compete with UI rendering for main-thread time.
 - Optional common-line or shared-edge behavior where it makes sense for foam cutting.

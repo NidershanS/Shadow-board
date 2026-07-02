@@ -160,6 +160,21 @@
       background: #fff4f4;
       font-weight: 700;
     }
+    .panel {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+    .panel .btns {
+      margin-top: 0;
+    }
+    .panel > button,
+    .inspector > button {
+      width: 100%;
+    }
+    .inspector > button {
+      margin-top: 8px;
+    }
     .panel.hidden { display: none; }
     .toolbar {
       display: grid;
@@ -495,6 +510,34 @@
     .report strong {
       color: var(--text);
     }
+    .step { cursor: pointer; }
+    .reportIssue { color: #a71111; font-weight: 700; }
+    .modalTune {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+    .emptyState {
+      position: absolute;
+      inset: 10px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+      border: 2px dashed #b7c3cb;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.72);
+      pointer-events: none;
+    }
+    .emptyState strong {
+      color: var(--text);
+      font-size: 16px;
+    }
     .hidden { display: none; }
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
@@ -583,6 +626,12 @@
         <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
         <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
         <label>Arrange time limit sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
+        <label>Arrange rotation
+          <select id="rotationMode">
+            <option value="tidy" selected>Tidy - 0/90 only</option>
+            <option value="dense">Dense - any angle</option>
+          </select>
+        </label>
         <button id="autoArrange">Arrange Now</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
         <button id="zoomOut">Zoom -</button>
@@ -598,6 +647,14 @@
             <span class="legendItem"><span class="legendLine selected"></span>Selected tool</span>
             <span class="legendItem"><span class="legendCircle"></span>Finger pull</span>
           </div>
+          <div id="emptyState" class="emptyState hidden">
+            <div>
+              <strong>Drop tool photos anywhere on this page</strong><br>
+              1. Photograph each tool flat on A4 or A3 paper<br>
+              2. Review and accept the detected contours<br>
+              3. Arrange the drawer, then export the DXF or SVG
+            </div>
+          </div>
         </div>
         <div class="inspector">
           <h2>Arrange</h2>
@@ -611,10 +668,10 @@
             <button id="duplicateSelected">Duplicate</button>
           </div>
           <div class="btns">
-            <button id="lockSelected">Lock Position</button>
             <button id="undoLayout">Undo</button>
+            <button id="redoLayout">Redo</button>
           </div>
-          <button id="redoLayout">Redo</button>
+          <button id="lockSelected">Lock Position</button>
           <div id="exportReport" class="report"></div>
           <h2>Layout Items</h2>
           <div id="layoutItems" class="selectedTools"></div>
@@ -630,6 +687,7 @@
       <strong id="busyText">Working...</strong>
       <div id="busyDetail" class="busyDetail">Please wait...</div>
       <div class="progressTrack" aria-hidden="true"><div id="busyProgress" class="progressBar"></div></div>
+      <button id="busyStop" class="hidden">Stop and keep best layout</button>
     </div>
   </div>
   <div id="previewModal" class="modal hidden" role="dialog" aria-modal="true">
@@ -643,6 +701,12 @@
       </div>
       <div class="modalBody">
         <img id="previewImage" alt="Detected tool contour preview">
+      </div>
+      <div class="modalTune">
+        <label>Tool name<input id="previewName" type="text" placeholder="e.g. 10mm spanner"></label>
+        <label>Offset mm<input id="previewOffset" type="number" min="0" step="0.1"></label>
+        <label>Gap repair mm<input id="previewRepair" type="number" min="0" step="0.5"></label>
+        <label>Smooth mm<input id="previewSmooth" type="number" min="0" step="0.25"></label>
       </div>
       <div class="modalTools">
         <button id="reprocessPreview">Reprocess</button>
@@ -664,6 +728,7 @@
         <canvas id="exportPreviewCanvas"></canvas>
       </div>
       <div class="modalTools">
+        <button id="downloadSvg">Download SVG</button>
         <button id="confirmExport" class="primary">Download DXF</button>
       </div>
     </div>
@@ -684,7 +749,9 @@
       selectedId: null,
       previewToolId: null,
       pendingLayoutDxf: null,
+      pendingLayoutSvg: null,
       pendingLayoutName: null,
+      arrangeStop: false,
       scale: 1,
       viewX: 20,
       viewY: 20,
@@ -755,7 +822,15 @@
       exportSummary: document.getElementById("exportSummary"),
       exportPreviewCanvas: document.getElementById("exportPreviewCanvas"),
       closeExportPreview: document.getElementById("closeExportPreview"),
-      confirmExport: document.getElementById("confirmExport")
+      confirmExport: document.getElementById("confirmExport"),
+      downloadSvg: document.getElementById("downloadSvg"),
+      rotationMode: document.getElementById("rotationMode"),
+      busyStop: document.getElementById("busyStop"),
+      emptyState: document.getElementById("emptyState"),
+      previewName: document.getElementById("previewName"),
+      previewOffset: document.getElementById("previewOffset"),
+      previewRepair: document.getElementById("previewRepair"),
+      previewSmooth: document.getElementById("previewSmooth")
     };
     const ctx = el.canvas.getContext("2d");
 
@@ -827,7 +902,29 @@
     }
 
     function nextFrame() {
-      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return new Promise(resolve => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        if (document.hidden) {
+          // Background tabs throttle timers and pause rAF; MessageChannel is not throttled.
+          const mc = new MessageChannel();
+          mc.port1.onmessage = finish;
+          mc.port2.postMessage(0);
+          return;
+        }
+        requestAnimationFrame(() => requestAnimationFrame(finish));
+        setTimeout(finish, 60);
+      });
+    }
+
+    async function maybeYield() {
+      if (performance.now() - (maybeYield.last || 0) < 80) return;
+      await nextFrame();
+      maybeYield.last = performance.now();
     }
 
     function showBusy(text, detail = "") {
@@ -1036,6 +1133,10 @@
       el.previewMeta.textContent = `Contour ${index + 1} of ${state.tools.length} | ${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm | ${status}`;
       el.previewImage.src = tool.previewLarge || tool.preview;
       el.acceptPreview.textContent = tool.accepted ? "Accepted" : "Accept contour";
+      el.previewName.value = tool.name;
+      el.previewOffset.value = el.offsetInput.value;
+      el.previewRepair.value = el.metalRepairInput.value;
+      el.previewSmooth.value = el.smoothInput.value;
       el.previewModal.classList.remove("hidden");
     }
 
@@ -1051,9 +1152,18 @@
       if (!tool) return;
       tool.accepted = true;
       tool.fitStatus = "";
+      if (!state.items.some(item => item.toolId === toolId)) {
+        pushHistory();
+        const item = makeLayoutItem(tool);
+        state.items.push(item);
+        quickPlaceItem(item);
+        state.selectedId = item.id;
+        showNotice(`${tool.name} accepted and added to the drawer.`);
+      } else {
+        showNotice(`${tool.name} contour accepted.`);
+      }
       renderAll();
       updateWorkflow();
-      showNotice(`${tool.name} contour accepted.`);
     }
 
     function nextUnacceptedTool() {
@@ -1624,22 +1734,33 @@
       const h = Math.max(16, Math.ceil((b.y1 - b.y0 + pad * 2) * PROC_PX_PER_MM));
       const mask = new Uint8Array(w * h);
 
+      // Scanline fill of the tool polygon (even-odd rule), then stamp pull circles.
+      const poly = tool.points;
       for (let py = 0; py < h; py++) {
         const y = y0 + (py + 0.5) / PROC_PX_PER_MM;
-        for (let px = 0; px < w; px++) {
-          const x = x0 + (px + 0.5) / PROC_PX_PER_MM;
-          let inside = pointInPolygon({ x, y }, tool.points);
-          if (!inside) {
-            for (const pull of pulls) {
-              const dx = x - pull.x;
-              const dy = y - pull.y;
-              if (dx * dx + dy * dy <= pull.r * pull.r) {
-                inside = true;
-                break;
-              }
-            }
+        const xs = [];
+        for (let i = 0; i < poly.length - 1; i++) {
+          const a = poly[i], b = poly[i + 1];
+          if ((a.y > y) === (b.y > y)) continue;
+          xs.push(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x));
+        }
+        xs.sort((p, q) => p - q);
+        for (let k = 0; k + 1 < xs.length; k += 2) {
+          const px0 = Math.max(0, Math.ceil((xs[k] - x0) * PROC_PX_PER_MM - 0.5));
+          const px1 = Math.min(w - 1, Math.floor((xs[k + 1] - x0) * PROC_PX_PER_MM - 0.5));
+          for (let px = px0; px <= px1; px++) mask[py * w + px] = 1;
+        }
+      }
+      for (const pull of pulls) {
+        const cxp = (pull.x - x0) * PROC_PX_PER_MM - 0.5;
+        const cyp = (pull.y - y0) * PROC_PX_PER_MM - 0.5;
+        const rp = pull.r * PROC_PX_PER_MM;
+        const r2 = rp * rp;
+        for (let py = Math.max(0, Math.floor(cyp - rp)); py <= Math.min(h - 1, Math.ceil(cyp + rp)); py++) {
+          for (let px = Math.max(0, Math.floor(cxp - rp)); px <= Math.min(w - 1, Math.ceil(cxp + rp)); px++) {
+            const dx = px - cxp, dy = py - cyp;
+            if (dx * dx + dy * dy <= r2) mask[py * w + px] = 1;
           }
-          if (inside) mask[py * w + px] = 1;
         }
       }
 
@@ -1804,10 +1925,39 @@
       };
     }
 
+    function quickPlaceItem(item) {
+      const dw = Number(el.drawerW.value);
+      const dh = Number(el.drawerH.value);
+      const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
+      if (!Number.isFinite(dw) || !Number.isFinite(dh)) return;
+      const fp = rotatedFootprint(item, item.rot);
+      const others = state.items.filter(i => i.id !== item.id).map(i => transformedItemBounds(i));
+      const xs = [gap];
+      const ys = [gap];
+      others.forEach(b => {
+        xs.push(b.x0, b.x1 + gap);
+        ys.push(b.y0, b.y1 + gap);
+      });
+      xs.sort((a, b) => a - b);
+      ys.sort((a, b) => a - b);
+      for (const y of ys) {
+        for (const x of xs) {
+          if (x + fp.width > dw - gap + 0.01 || y + fp.height > dh - gap + 0.01) continue;
+          const bb = { x0: x, y0: y, x1: x + fp.width, y1: y + fp.height };
+          if (others.some(o => bboxOverlap(expandBbox(bb, Math.max(0, gap - 0.01)), o))) continue;
+          item.x = x - fp.x0;
+          item.y = y - fp.y0;
+          return;
+        }
+      }
+      clampItemToDrawer(item);
+    }
+
     function addToolToLayout(tool) {
       pushHistory();
       const item = makeLayoutItem(tool);
       state.items.push(item);
+      quickPlaceItem(item);
       state.selectedId = item.id;
       renderAll();
     }
@@ -1831,8 +1981,8 @@
         tool.fitStatus = "";
         const item = makeLayoutItem(tool);
         state.items.push(item);
+        quickPlaceItem(item);
         state.selectedId = item.id;
-        clampItemToDrawer(item);
       });
       state.lastArrangeReport = null;
       renderAll();
@@ -2082,7 +2232,11 @@
       return pts;
     }
 
-    const NEST_ROTATIONS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+    const NEST_ROTATIONS_DENSE = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+    const NEST_ROTATIONS_TIDY = [0, 90, 180, 270];
+    function nestRotations() {
+      return el.rotationMode.value === "dense" ? NEST_ROTATIONS_DENSE : NEST_ROTATIONS_TIDY;
+    }
     const NEST_MAX_POLYGON_POINTS = 96;
     const NEST_MAX_CANDIDATES_PER_ROTATION = 450;
     const NEST_MAX_COMPACT_ROUNDS = 36;
@@ -2209,6 +2363,108 @@
       return samples;
     }
 
+    const NEST_RASTER_MM = 3;
+    const NEST_MAX_NFP_CANDIDATES = 250;
+
+    function fillPolygonIntoGrid(poly, grid, gw, gh, res) {
+      const b = bboxPoints(poly);
+      const x0 = Math.max(0, Math.floor(b.x0 / res));
+      const x1 = Math.min(gw - 1, Math.ceil(b.x1 / res));
+      const y0 = Math.max(0, Math.floor(b.y0 / res));
+      const y1 = Math.min(gh - 1, Math.ceil(b.y1 / res));
+      for (let gy = y0; gy <= y1; gy++) {
+        for (let gx = x0; gx <= x1; gx++) {
+          if (grid[gy * gw + gx]) continue;
+          if (pointInPolygon({ x: (gx + 0.5) * res, y: (gy + 0.5) * res }, poly)) grid[gy * gw + gx] = 1;
+        }
+      }
+    }
+
+    function buildOccupancy(placed, gap, dw, dh, res = NEST_RASTER_MM) {
+      const gw = Math.max(1, Math.ceil(dw / res));
+      const gh = Math.max(1, Math.ceil(dh / res));
+      let grid = new Uint8Array(gw * gh);
+      placed.forEach(p => p.polygons.forEach(poly => fillPolygonIntoGrid(poly, grid, gw, gh, res)));
+      const gapCells = Math.max(0, Math.round(gap / res));
+      if (gapCells > 0) grid = boxDilate(grid, gw, gh, gapCells);
+      return { grid, gw, gh, res };
+    }
+
+    function nfpCandidates(occupancy, option, gap, dw, dh) {
+      const { grid, gw, gh, res } = occupancy;
+      const pw = Math.max(1, Math.ceil(option.fp.width / res));
+      const ph = Math.max(1, Math.ceil(option.fp.height / res));
+      if (pw >= gw || ph >= gh) return [];
+      const part = new Uint8Array(pw * ph);
+      option.polygons.forEach(poly => {
+        fillPolygonIntoGrid(poly.map(pt => ({ x: pt.x - option.fp.x0, y: pt.y - option.fp.y0 })), part, pw, ph, res);
+      });
+      // Collision-test with the part's boundary cells only; the exact polygon
+      // check in placementFits gates every candidate afterwards.
+      const cells = [];
+      for (let i = 0; i < part.length; i++) {
+        if (!part[i]) continue;
+        const cx = i % pw;
+        const cy = (i / pw) | 0;
+        const isBoundary = cx === 0 || cy === 0 || cx === pw - 1 || cy === ph - 1 ||
+          !part[i - 1] || !part[i + 1] || !part[i - pw] || !part[i + pw];
+        if (isBoundary) cells.push([cx, cy]);
+      }
+      if (!cells.length) return [];
+      const margin = Math.max(0, Math.ceil(gap / res));
+      const maxGX = Math.floor((dw - gap) / res) - pw;
+      const maxGY = Math.floor((dh - gap) / res) - ph;
+      const fitW = maxGX - margin + 1;
+      const fitH = maxGY - margin + 1;
+      if (fitW <= 0 || fitH <= 0) return [];
+      const fit = new Uint8Array(fitW * fitH);
+      for (let fy = 0; fy < fitH; fy++) {
+        const gy = margin + fy;
+        for (let fx = 0; fx < fitW; fx++) {
+          const gx = margin + fx;
+          let ok = 1;
+          for (let k = 0; k < cells.length; k++) {
+            if (grid[(gy + cells[k][1]) * gw + gx + cells[k][0]]) { ok = 0; break; }
+          }
+          fit[fy * fitW + fx] = ok;
+        }
+      }
+      const out = [];
+      const blockedNear = (fx, fy) => {
+        for (let d = 1; d <= 2; d++) {
+          if (fx - d < 0 || fy - d < 0) return true;
+          if (!fit[fy * fitW + fx - d] || !fit[(fy - d) * fitW + fx]) return true;
+        }
+        return false;
+      };
+      for (let fy = 0; fy < fitH; fy++) {
+        for (let fx = 0; fx < fitW; fx++) {
+          if (!fit[fy * fitW + fx]) continue;
+          if (blockedNear(fx, fy)) out.push({ x: (margin + fx) * res, y: (margin + fy) * res });
+        }
+      }
+      if (out.length > NEST_MAX_NFP_CANDIDATES) {
+        const step = Math.ceil(out.length / NEST_MAX_NFP_CANDIDATES);
+        return out.filter((_, i) => i % step === 0);
+      }
+      return out;
+    }
+
+    function mergedCandidates(placed, gap, option, occupancy, dw, dh) {
+      const base = candidatePositions(placed, gap, option);
+      const nfp = occupancy ? nfpCandidates(occupancy, option, gap, dw, dh) : [];
+      if (!nfp.length) return base;
+      const seen = new Set();
+      const all = [];
+      for (const p of [...nfp, ...base]) {
+        const key = Math.round(p.x * 2) + "," + Math.round(p.y * 2);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push(p);
+      }
+      return all.sort((a, b) => a.y - b.y || a.x - b.x).slice(0, NEST_MAX_CANDIDATES_PER_ROTATION + NEST_MAX_NFP_CANDIDATES);
+    }
+
     function candidatePositions(placed, gap, option = null) {
       const xs = [gap];
       const ys = [gap];
@@ -2333,6 +2589,8 @@
         return;
       }
       showBusy("Arranging contours...", "Preparing nesting search...");
+      state.arrangeStop = false;
+      el.busyStop.classList.remove("hidden");
       el.autoArrange.disabled = true;
       await nextFrame();
       const dw = Number(el.drawerW.value);
@@ -2340,7 +2598,7 @@
       const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
       const maxSeconds = Math.min(60, Math.max(1, Number(el.arrangeTimeInput.value) || 8));
       const deadline = performance.now() + maxSeconds * 1000;
-      const shouldStop = () => performance.now() >= deadline;
+      const shouldStop = () => state.arrangeStop || performance.now() >= deadline;
       let overflow = 0;
       let stoppedByTime = false;
       const entries = state.items
@@ -2527,13 +2785,14 @@
             `Pass ${orderIndex + 1}/${totalOrders}, item ${entryIndex + 1}/${arranged.length}. Stop limit ${maxSeconds}s.`,
             orderProgress + itemProgress
           );
-          await nextFrame();
+          await maybeYield();
           if (shouldStop()) {
             stoppedByTime = true;
             return null;
           }
           const item = entry.item;
-          const rotationOptions = NEST_ROTATIONS.map(rot => ({
+          const occupancy = buildOccupancy(placed, gap, dw, dh);
+          const rotationOptions = nestRotations().map(rot => ({
             rot,
             fp: rotatedFootprint(item, rot),
             polygons: rotatedCollisionPolygons(item, rot)
@@ -2546,27 +2805,41 @@
               `Pass ${orderIndex + 1}/${totalOrders}, item ${entryIndex + 1}/${arranged.length}, orientation ${option.rot} deg.`,
               orderProgress + itemProgress
             );
-            await nextFrame();
-            const candidates = candidatePositions(placed, gap, option);
+            await maybeYield();
+            const candidates = mergedCandidates(placed, gap, option, occupancy, dw, dh);
+            // Score all candidates cheaply (bbox math only), then run the
+            // expensive exact polygon check in score order and keep the first fit.
+            const placedBounds = layoutBounds(placed);
+            const sumArea = placed.reduce((sum, p) => sum + p.entry.area, 0) + entry.area;
+            const scored = [];
             for (const candidate of candidates) {
-              if (shouldStop()) {
-                stoppedByTime = true;
-                break;
-              }
               const bbox = {
                 x0: candidate.x,
                 y0: candidate.y,
                 x1: candidate.x + option.fp.width,
                 y1: candidate.y + option.fp.height
               };
-              const polygons = shiftedPolygons(option.polygons, candidate.x - option.fp.x0, candidate.y - option.fp.y0);
-              const test = { entry, item, rot: option.rot, fp: option.fp, x: candidate.x, y: candidate.y, bbox, polygons, optionPolygons: option.polygons };
+              const ux0 = placed.length ? Math.min(placedBounds.x0, bbox.x0) : bbox.x0;
+              const uy0 = placed.length ? Math.min(placedBounds.y0, bbox.y0) : bbox.y0;
+              const ux1 = placed.length ? Math.max(placedBounds.x1, bbox.x1) : bbox.x1;
+              const uy1 = placed.length ? Math.max(placedBounds.y1, bbox.y1) : bbox.y1;
+              const waste = (ux1 - ux0) * (uy1 - uy0) - sumArea;
+              const score = (uy1 - uy0) * 100000 + (ux1 - ux0) * 800 + waste * 0.8 + bbox.y0 * 40 + bbox.x0;
+              if (best && score >= best.score) continue;
+              scored.push({ candidate, bbox, score });
+            }
+            scored.sort((a, b) => a.score - b.score);
+            for (const s of scored) {
+              if (shouldStop()) {
+                stoppedByTime = true;
+                break;
+              }
+              if (best && s.score >= best.score) break;
+              const polygons = shiftedPolygons(option.polygons, s.candidate.x - option.fp.x0, s.candidate.y - option.fp.y0);
+              const test = { entry, item, rot: option.rot, fp: option.fp, x: s.candidate.x, y: s.candidate.y, bbox: s.bbox, polygons, optionPolygons: option.polygons, score: s.score };
               if (!placementFits(test, placed, gap, dw, dh)) continue;
-              const withTest = [...placed, test];
-              const used = layoutBounds(withTest);
-              const waste = (used.width * used.height) - withTest.reduce((sum, p) => sum + p.entry.area, 0);
-              const score = used.height * 100000 + used.width * 800 + waste * 0.8 + bbox.y0 * 40 + bbox.x0;
-              if (!best || score < best.score) best = { ...test, score };
+              best = test;
+              break;
             }
           }
 
@@ -2582,7 +2855,7 @@
           placed.push(best);
         }
         updateBusy("Compacting layout...", `Pass ${orderIndex + 1}/${totalOrders}. Sliding parts into open spaces.`, ((orderIndex + 0.85) / totalOrders) * 100);
-        await nextFrame();
+        await maybeYield();
         compactPlacements(placed, gap, dw, dh, shouldStop);
         if (placed.length < arranged.length + lockedPlacements.length) {
           stoppedByTime = true;
@@ -2606,6 +2879,13 @@
         };
       }
 
+      function applyPlacements(result) {
+        result.placed.forEach(best => {
+          placeItemByFootprint(best.item, best.x, best.y, best.rot, best.fp);
+          invalidateContourCache(best.item);
+        });
+      }
+
       try {
         const orders = [
           [...arrangeEntries].sort((a, b) => b.area - a.area || a.order - b.order),
@@ -2618,6 +2898,10 @@
         await nextFrame();
         const baselineOrder = [...arrangeEntries].sort((a, b) => b.height - a.height || b.area - a.area);
         let result = fastBboxArrange(baselineOrder) || safeShelfArrange(baselineOrder) || partialFastArrange(baselineOrder);
+        if (result) {
+          applyPlacements(result);
+          drawLayout();
+        }
         for (let orderIndex = 0; orderIndex < orders.length; orderIndex++) {
           const order = orders[orderIndex];
           if (shouldStop() && result) {
@@ -2625,7 +2909,11 @@
             break;
           }
           const attempt = await arrangeOrder(order, orderIndex, orders.length);
-          if (attempt && (!result || attempt.score < result.score)) result = attempt;
+          if (attempt && (!result || attempt.score < result.score)) {
+            result = attempt;
+            applyPlacements(result);
+            drawLayout();
+          }
           if (shouldStop()) {
             stoppedByTime = true;
             break;
@@ -2644,10 +2932,7 @@
 
         updateBusy("Applying layout...", "Updating drawer and library fit status.", 100);
         await nextFrame();
-        result.placed.forEach(best => {
-          placeItemByFootprint(best.item, best.x, best.y, best.rot, best.fp);
-          invalidateContourCache(best.item);
-        });
+        applyPlacements(result);
         const placedIds = new Set(result.placed.map(p => p.item.id));
         const unplacedEntries = result.unplaced || [];
         unplacedEntries.forEach(entry => {
@@ -2668,12 +2953,14 @@
         if (unplacedEntries.length) {
           showNotice(`${result.placed.length} placed. ${unplacedEntries.length} tool(s) could not fit and stayed in the library.`);
         } else if (stoppedByTime) {
-          showNotice(`Deepnest-lite stopped at ${maxSeconds}s and applied the best complete ${result.source} layout found.`);
+          showNotice(`Arrange stopped ${state.arrangeStop ? "by you" : `at ${maxSeconds}s`}. Applied the best complete ${result.source} layout found.`);
         } else {
-          showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite densely arranged ${state.items.length} item(s).`);
+          showNotice(overflow ? `Arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Densely arranged ${state.items.length} item(s).`);
         }
       } finally {
         el.autoArrange.disabled = false;
+        el.busyStop.classList.add("hidden");
+        state.arrangeStop = false;
         hideBusy();
       }
     }
@@ -2712,9 +2999,15 @@
           else ctx.lineTo(s.x, s.y);
         });
         ctx.closePath();
-        ctx.fillStyle = item.id === state.selectedId ? "rgba(200,24,24,0.10)" : "rgba(28,37,44,0.06)";
-        ctx.strokeStyle = item.id === state.selectedId ? "#c81818" : "#222";
-        ctx.lineWidth = item.id === state.selectedId ? 2 : 1.4;
+        if (item._overlapping) {
+          ctx.fillStyle = "rgba(208, 22, 28, 0.28)";
+          ctx.strokeStyle = "#d0161c";
+          ctx.lineWidth = 2.4;
+        } else {
+          ctx.fillStyle = item.id === state.selectedId ? "rgba(200,24,24,0.10)" : "rgba(28,37,44,0.06)";
+          ctx.strokeStyle = item.id === state.selectedId ? "#c81818" : "#222";
+          ctx.lineWidth = item.id === state.selectedId ? 2 : 1.4;
+        }
         ctx.fill();
         ctx.stroke();
         const pulls = itemPulls(item);
@@ -2742,13 +3035,36 @@
     function renderAll() {
       renderToolList();
       renderLayoutItems();
+      state.items.forEach(item => updateDragOverlap(item));
       drawLayout();
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
       el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
+      el.downloadLayout.disabled = !state.items.length;
+      el.emptyState.classList.toggle("hidden", !!(state.tools.length || state.items.length));
       renderExportReport();
       updateWorkflow();
       scheduleAutosave();
+    }
+
+    function itemWorldPolygons(item) {
+      const tool = getTool(item.toolId);
+      const polys = [nestingPolygon(tool.points).map(p => transformPoint(p, item))];
+      itemPulls(item).forEach(pull => {
+        polys.push(circlePolygon(transformPoint(pull, item), pull.r, 16));
+      });
+      return polys;
+    }
+
+    function updateDragOverlap(item) {
+      const a = itemWorldPolygons(item);
+      const ab = bboxPoints(a.flat());
+      item._overlapping = state.items.some(other => {
+        if (other.id === item.id) return false;
+        const b = itemWorldPolygons(other);
+        if (!bboxOverlap(ab, bboxPoints(b.flat()))) return false;
+        return polygonSetsTooClose(a, b, 0);
+      });
     }
 
     function hitTest(world) {
@@ -2805,7 +3121,13 @@
     }
 
     function makeDxf(entities, drawer = null) {
-      const lines = ["0", "SECTION", "2", "ENTITIES"];
+      const lines = [
+        "0", "SECTION", "2", "HEADER",
+        "9", "$INSUNITS", "70", "4",
+        "9", "$MEASUREMENT", "70", "1",
+        "0", "ENDSEC",
+        "0", "SECTION", "2", "ENTITIES"
+      ];
       if (drawer) {
         lines.push(...dxfPolyline([
           { x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h },
@@ -2839,9 +3161,15 @@
         });
       });
       const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
-      const dxf = makeDxf(ents, drawer);
+      const dxfEnts = ents.map(ent => ({
+        layer: ent.layer,
+        points: ent.points.map(p => ({ x: p.x, y: drawer.h - p.y }))
+      }));
+      const dxf = makeDxf(dxfEnts, drawer);
+      const svg = makeSvg(ents, drawer);
       return {
         dxf,
+        svg,
         ents,
         drawer,
         report,
@@ -2849,8 +3177,20 @@
       };
     }
 
+    function makeSvg(ents, drawer) {
+      const pathFor = points => points.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join("") + "Z";
+      const body = ents.map(ent => `  <path d="${pathFor(ent.points)}" fill="none" stroke="#000" stroke-width="0.2"/>`).join("\n");
+      return [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${drawer.w}mm" height="${drawer.h}mm" viewBox="0 0 ${drawer.w} ${drawer.h}">`,
+        `  <rect x="0" y="0" width="${drawer.w}" height="${drawer.h}" fill="none" stroke="#000" stroke-width="0.2"/>`,
+        body,
+        "</svg>"
+      ].join("\n");
+    }
+
     function showExportPreview(data) {
       state.pendingLayoutDxf = data.dxf;
+      state.pendingLayoutSvg = data.svg;
       state.pendingLayoutName = data.name;
       const spacing = Number.isFinite(data.report.minGap) ? `${data.report.minGap.toFixed(1)} mm min gap` : "Spacing not measured";
       el.exportSummary.textContent = `${data.drawer.w} x ${data.drawer.h} mm drawer | ${data.ents.length} tool cutout(s) | ${spacing} | finger pulls included`;
@@ -2861,6 +3201,7 @@
     function hideExportPreview() {
       el.exportModal.classList.add("hidden");
       state.pendingLayoutDxf = null;
+      state.pendingLayoutSvg = null;
       state.pendingLayoutName = null;
     }
 
@@ -2967,8 +3308,13 @@
     function renderExportReport() {
       if (!el.exportReport) return;
       const report = validateLayout();
-      const gapText = report.minGap == null ? "n/a" : `${report.minGap.toFixed(1)} mm`;
-      const issueText = report.issues.length ? report.issues.slice(0, 3).map(i => `<div>${escapeHtml(i)}</div>`).join("") : "<div>Ready for drawer DXF export.</div>";
+      const spacing = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
+      const gapText = report.minGap == null
+        ? "n/a"
+        : report.minGap < spacing - 0.01
+          ? `<span class="reportIssue">${report.minGap.toFixed(1)} mm (below ${spacing} mm target)</span>`
+          : `${report.minGap.toFixed(1)} mm`;
+      const issueText = report.issues.length ? report.issues.slice(0, 3).map(i => `<div class="reportIssue">${escapeHtml(i)}</div>`).join("") : "<div>Ready for drawer DXF export.</div>";
       el.exportReport.innerHTML = `
         <strong>${report.ready ? "Export ready" : "Check before export"}</strong>
         <div>${report.placed} layout item(s), ${report.accepted}/${report.totalTools} library contour(s) accepted</div>
@@ -2986,7 +3332,9 @@
         return;
       }
       const tool = getTool(item.toolId);
-      const ents = [{ layer: "CUT", points: combinedLocalPoints(item) }];
+      const pts = combinedLocalPoints(item);
+      const b = bboxPoints(pts);
+      const ents = [{ layer: "CUT", points: pts.map(p => ({ x: p.x - b.x0, y: b.y1 - p.y })) }];
       const dxf = makeDxf(ents);
       download(tool.name.replace(/[^A-Za-z0-9_-]/g, "_") + ".dxf", dxf);
       showNotice(`Success: exported ${tool.name} as one contour DXF.`);
@@ -2997,6 +3345,26 @@
       setStatus(`${state.pendingFiles.length} new image(s) ready for contour detection.`);
       showPanel("setup");
       setWorkflow("upload");
+      if (state.pendingFiles.length) detectPending();
+    });
+
+    ["dragover", "drop"].forEach(type => {
+      document.addEventListener(type, ev => ev.preventDefault());
+    });
+    document.addEventListener("drop", ev => {
+      const files = Array.from(ev.dataTransfer?.files || []);
+      if (!files.length) return;
+      const jsonFile = files.find(f => /\.json$/i.test(f.name));
+      const images = files.filter(f => f.type.startsWith("image/"));
+      if (images.length) {
+        state.pendingFiles = images;
+        setStatus(`${images.length} dropped image(s) queued for detection.`);
+        detectPending();
+      } else if (jsonFile) {
+        importProjectFile(jsonFile);
+      } else {
+        showNotice("Drop tool photos (images) or a project JSON file.");
+      }
     });
 
     el.panelButtons.forEach(btn => {
@@ -3005,9 +3373,9 @@
 
     el.acceptAllContours.addEventListener("click", () => {
       state.tools.forEach(tool => { tool.accepted = true; });
-      renderAll();
+      addAcceptedToolsToDrawer();
       showPanel("review");
-      showNotice(`${state.tools.length} contour(s) accepted. Add them to the drawer when ready.`);
+      showNotice(`${state.tools.length} contour(s) accepted and added to the drawer.`);
     });
 
     el.reviewNextContour.addEventListener("click", () => {
@@ -3030,11 +3398,12 @@
       el.importProjectInput.value = "";
     });
 
-    el.processBtn.addEventListener("click", async () => {
+    async function detectPending() {
       if (!state.pendingFiles.length) {
         setStatus("Choose one or more images first.");
         return;
       }
+      if (el.processBtn.disabled) return;
       el.processBtn.disabled = true;
       try {
         state.lastArrangeReport = null;
@@ -3058,7 +3427,9 @@
         el.processBtn.disabled = false;
         renderAll();
       }
-    });
+    }
+
+    el.processBtn.addEventListener("click", detectPending);
 
     el.canvas.addEventListener("pointerdown", ev => {
       const rect = el.canvas.getBoundingClientRect();
@@ -3080,13 +3451,19 @@
         }
       } else {
         state.selectedId = null;
-        state.drag = null;
+        state.drag = { mode: "pan", sx: ev.clientX, sy: ev.clientY, vx: state.viewX, vy: state.viewY };
       }
       renderAll();
     });
 
     window.addEventListener("pointermove", ev => {
       if (!state.drag) return;
+      if (state.drag.mode === "pan") {
+        state.viewX = state.drag.vx + (ev.clientX - state.drag.sx);
+        state.viewY = state.drag.vy + (ev.clientY - state.drag.sy);
+        drawLayout();
+        return;
+      }
       const rect = el.canvas.getBoundingClientRect();
       const world = toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
       const item = state.items.find(i => i.id === state.drag.id);
@@ -3101,10 +3478,24 @@
           item.x = world.x - state.drag.dx;
           item.y = world.y - state.drag.dy;
           clampItemToDrawer(item);
+          updateDragOverlap(item);
         }
         drawLayout();
       }
     });
+
+    el.canvas.addEventListener("wheel", ev => {
+      ev.preventDefault();
+      const rect = el.canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+      const world = toWorld(mx, my);
+      const factor = ev.deltaY < 0 ? 1.12 : 0.89;
+      state.scale = Math.max(0.05, Math.min(40, state.scale * factor));
+      state.viewX = mx - world.x * state.scale;
+      state.viewY = my - world.y * state.scale;
+      drawLayout();
+    }, { passive: false });
 
     window.addEventListener("pointerup", () => {
       if (!state.drag) return;
@@ -3213,6 +3604,57 @@
       if (state.previewToolId) reprocessTool(state.previewToolId);
     });
 
+    el.previewName.addEventListener("input", () => {
+      const tool = getTool(state.previewToolId);
+      if (!tool) return;
+      tool.name = el.previewName.value.trim() || tool.name;
+      el.previewTitle.textContent = tool.name;
+      clearTimeout(el.previewName._timer);
+      el.previewName._timer = setTimeout(() => {
+        renderToolList();
+        renderLayoutItems();
+        scheduleAutosave();
+      }, 400);
+    });
+
+    [
+      [el.previewOffset, el.offsetInput],
+      [el.previewRepair, el.metalRepairInput],
+      [el.previewSmooth, el.smoothInput]
+    ].forEach(([modalInput, mainInput]) => {
+      modalInput.addEventListener("input", () => {
+        if (modalInput.value === "") return;
+        mainInput.value = modalInput.value;
+        invalidateContourCache();
+        clearTimeout(showPreview._tuneTimer);
+        showPreview._tuneTimer = setTimeout(() => {
+          if (state.previewToolId) reprocessTool(state.previewToolId);
+        }, 650);
+      });
+    });
+
+    el.busyStop.addEventListener("click", () => {
+      state.arrangeStop = true;
+      updateBusy("Stopping...", "Keeping the best layout found so far.");
+    });
+
+    el.downloadSvg.addEventListener("click", () => {
+      if (!state.pendingLayoutSvg || !state.pendingLayoutName) {
+        showNotice("No drawer SVG is ready yet. Run export again.");
+        return;
+      }
+      download(state.pendingLayoutName.replace(/\.dxf$/i, ".svg"), state.pendingLayoutSvg, "image/svg+xml");
+      showNotice("Success: exported drawer layout as SVG.");
+    });
+
+    el.workflowSteps.forEach(step => {
+      step.addEventListener("click", () => {
+        const map = { upload: "setup", review: "review", arrange: "review", export: "review" };
+        showPanel(map[step.dataset.step] || "setup");
+        if (step.dataset.step === "arrange" || step.dataset.step === "export") fitView();
+      });
+    });
+
     el.closePreview.addEventListener("click", hidePreview);
     el.previewModal.addEventListener("click", ev => {
       if (ev.target === el.previewModal) hidePreview();
@@ -3244,6 +3686,8 @@
         if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Backspace"].includes(ev.key)) ev.preventDefault();
         if (ev.key === "Delete" || ev.key === "Backspace") {
           deleteLayoutItem(item.id);
+        } else if (ev.key === "r" || ev.key === "R") {
+          rotateSelected(ev.shiftKey ? -15 : 15);
         } else if (ev.key.startsWith("Arrow")) {
           pushHistory();
           if (ev.key === "ArrowLeft") item.x -= step;
@@ -3263,10 +3707,12 @@
         setStatus("Restored saved project from this browser.");
       } else {
         fitView();
+        renderAll();
       }
     } catch (err) {
       console.error(err);
       fitView();
+      renderAll();
       setStatus("Could not restore saved project. Start a new project or import a project JSON.");
     }
   </script>
