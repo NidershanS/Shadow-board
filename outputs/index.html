@@ -120,6 +120,40 @@
       font-size: 12px;
       line-height: 1.35;
     }
+    .workflow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin: 0 0 14px;
+    }
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 5px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      background: #fbfcfd;
+    }
+    .step.active {
+      border-color: var(--accent);
+      color: var(--accent-dark);
+      background: #fff4f4;
+      font-weight: 700;
+    }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .tabs button.active {
+      border-color: var(--accent);
+      color: var(--accent-dark);
+      background: #fff4f4;
+      font-weight: 700;
+    }
+    .panel.hidden { display: none; }
     .toolbar {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
@@ -176,6 +210,27 @@
     .item.active {
       border-color: var(--accent);
       box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .item.accepted {
+      border-color: #8bbd95;
+    }
+    .badge {
+      display: inline-block;
+      width: fit-content;
+      margin-top: 5px;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 11px;
+      background: #eef3f5;
+      color: var(--muted);
+    }
+    .badge.ok {
+      background: #eef9f0;
+      color: #12351b;
+    }
+    .badge.warn {
+      background: #fff7dc;
+      color: #5d4500;
     }
     .thumb {
       width: 70px;
@@ -333,6 +388,29 @@
       border: 1px solid var(--line);
       background: #fff;
     }
+    .modalTools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: end;
+      padding: 10px 12px;
+      border-top: 1px solid var(--line);
+      background: #fff;
+    }
+    .report {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .report strong {
+      color: var(--text);
+    }
     .hidden { display: none; }
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
@@ -347,44 +425,64 @@
   <div class="app">
     <aside>
       <h1>Shadow Board DXF Maker</h1>
+      <div class="workflow" aria-label="Workflow">
+        <div class="step active" data-step="upload">1 Upload</div>
+        <div class="step" data-step="review">2 Review</div>
+        <div class="step" data-step="arrange">3 Arrange</div>
+        <div class="step" data-step="export">4 Export</div>
+      </div>
+      <div class="tabs">
+        <button class="active" data-panel-btn="setup">Setup</button>
+        <button data-panel-btn="review">Detected</button>
+        <button data-panel-btn="project">Project</button>
+      </div>
       <div class="controls">
-        <label>
-          Upload A3/A4 tool photos
-          <input id="fileInput" type="file" accept="image/*" multiple>
-        </label>
-        <label>
-          Paper size
-          <select id="paperSize">
-            <option value="a4" selected>A4 - 210 x 297 mm</option>
-            <option value="a3">A3 - 297 x 420 mm</option>
-          </select>
-        </label>
-        <div class="grid2">
-          <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
-          <label>Metal repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
+        <div class="panel" data-panel="setup">
+          <label>
+            Upload A3/A4 tool photos
+            <input id="fileInput" type="file" accept="image/*" multiple>
+          </label>
+          <label>
+            Paper size
+            <select id="paperSize">
+              <option value="a4" selected>A4 - 210 x 297 mm</option>
+              <option value="a3">A3 - 297 x 420 mm</option>
+            </select>
+          </label>
+          <div class="grid2">
+            <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
+            <label>Metal repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
+          </div>
+          <div class="grid2">
+            <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
+            <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
+          </div>
+          <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
+          <button id="processBtn" class="primary">Process Images</button>
         </div>
-        <div class="grid2">
-          <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
-          <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
+        <div class="panel hidden" data-panel="review">
+          <div class="btns">
+            <button id="acceptAllContours" class="secondary">Accept All</button>
+            <button id="reviewNextContour">Review Next</button>
+          </div>
+          <h2>Detected Tools</h2>
+          <div id="toolList"></div>
         </div>
-        <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
-        <label>Project name<input id="projectName" type="text" value="shadow_board" placeholder="Project name"></label>
-        <button id="processBtn" class="primary">Process Images</button>
-        <div class="btns">
-          <button id="saveProject" class="secondary">Save Project</button>
-          <button id="loadProject">Load Saved</button>
-        </div>
-        <button id="newProject">New Project / Clear Saved</button>
-        <div class="btns">
-          <button id="exportProject">Export Project</button>
-          <button id="importProject">Import Project</button>
+        <div class="panel hidden" data-panel="project">
+          <label>Project name<input id="projectName" type="text" value="shadow_board" placeholder="Project name"></label>
+          <div class="btns">
+            <button id="saveProject" class="secondary">Save Project</button>
+            <button id="loadProject">Load Saved</button>
+          </div>
+          <button id="newProject">New Project / Clear Saved</button>
+          <div class="btns">
+            <button id="exportProject">Export Project</button>
+            <button id="importProject">Import Project</button>
+          </div>
         </div>
         <input id="importProjectInput" class="hidden" type="file" accept="application/json,.json">
         <div id="status" class="status">Upload uncropped photos with the tool placed on the selected paper size.</div>
       </div>
-
-      <h2>Detected Tools</h2>
-      <div id="toolList"></div>
     </aside>
 
     <main>
@@ -416,6 +514,12 @@
             <button id="downloadSelected">Export Tool DXF</button>
             <button id="duplicateSelected">Duplicate</button>
           </div>
+          <div class="btns">
+            <button id="lockSelected">Lock Position</button>
+            <button id="undoLayout">Undo</button>
+          </div>
+          <button id="redoLayout">Redo</button>
+          <div id="exportReport" class="report"></div>
           <h2>Layout Items</h2>
           <div id="layoutItems" class="selectedTools"></div>
         </div>
@@ -441,6 +545,11 @@
       <div class="modalBody">
         <img id="previewImage" alt="Detected tool contour preview">
       </div>
+      <div class="modalTools">
+        <button id="reprocessPreview">Reprocess</button>
+        <button id="deletePreview" class="danger">Delete</button>
+        <button id="acceptPreview" class="secondary">Accept Contour</button>
+      </div>
     </div>
   </div>
 
@@ -456,10 +565,14 @@
       tools: [],
       items: [],
       selectedId: null,
+      previewToolId: null,
       scale: 1,
       viewX: 20,
       viewY: 20,
-      drag: null
+      drag: null,
+      history: [],
+      future: [],
+      lastArrangeReport: null
     };
 
     const el = {
@@ -468,6 +581,11 @@
       status: document.getElementById("status"),
       toolList: document.getElementById("toolList"),
       layoutItems: document.getElementById("layoutItems"),
+      panelButtons: document.querySelectorAll("[data-panel-btn]"),
+      panels: document.querySelectorAll("[data-panel]"),
+      workflowSteps: document.querySelectorAll("[data-step]"),
+      acceptAllContours: document.getElementById("acceptAllContours"),
+      reviewNextContour: document.getElementById("reviewNextContour"),
       canvas: document.getElementById("layoutCanvas"),
       drawerW: document.getElementById("drawerW"),
       drawerH: document.getElementById("drawerH"),
@@ -493,9 +611,13 @@
       zoomOut: document.getElementById("zoomOut"),
       zoomIn: document.getElementById("zoomIn"),
       duplicateSelected: document.getElementById("duplicateSelected"),
+      lockSelected: document.getElementById("lockSelected"),
+      undoLayout: document.getElementById("undoLayout"),
+      redoLayout: document.getElementById("redoLayout"),
       rotateLeft: document.getElementById("rotateLeft"),
       rotateRight: document.getElementById("rotateRight"),
       fitView: document.getElementById("fitView"),
+      exportReport: document.getElementById("exportReport"),
       toast: document.getElementById("toast"),
       busyOverlay: document.getElementById("busyOverlay"),
       busyText: document.getElementById("busyText"),
@@ -504,12 +626,70 @@
       previewModal: document.getElementById("previewModal"),
       previewTitle: document.getElementById("previewTitle"),
       previewImage: document.getElementById("previewImage"),
-      closePreview: document.getElementById("closePreview")
+      closePreview: document.getElementById("closePreview"),
+      acceptPreview: document.getElementById("acceptPreview"),
+      deletePreview: document.getElementById("deletePreview"),
+      reprocessPreview: document.getElementById("reprocessPreview")
     };
     const ctx = el.canvas.getContext("2d");
 
     function setStatus(text) {
       el.status.textContent = text;
+    }
+
+    function showPanel(name) {
+      el.panels.forEach(panel => panel.classList.toggle("hidden", panel.dataset.panel !== name));
+      el.panelButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.panelBtn === name));
+    }
+
+    function setWorkflow(step) {
+      el.workflowSteps.forEach(s => s.classList.toggle("active", s.dataset.step === step));
+    }
+
+    function acceptedCount() {
+      return state.tools.filter(t => t.accepted).length;
+    }
+
+    function updateWorkflow() {
+      if (!state.tools.length) setWorkflow("upload");
+      else if (acceptedCount() < state.tools.length) setWorkflow("review");
+      else if (!state.lastArrangeReport) setWorkflow("arrange");
+      else setWorkflow("export");
+      renderExportReport();
+    }
+
+    function snapshotLayout() {
+      return state.items.map(item => ({
+        id: item.id,
+        toolId: item.toolId,
+        x: item.x,
+        y: item.y,
+        rot: item.rot,
+        locked: !!item.locked,
+        pulls: clonePulls(itemPulls(item))
+      }));
+    }
+
+    function restoreLayout(items) {
+      const toolIds = new Set(state.tools.map(t => t.id));
+      state.items = items.map(item => ({
+        id: item.id,
+        toolId: item.toolId,
+        x: Number(item.x) || 0,
+        y: Number(item.y) || 0,
+        rot: Number(item.rot) || 0,
+        locked: !!item.locked,
+        pulls: clonePulls(item.pulls || [])
+      })).filter(item => toolIds.has(item.toolId));
+      state.selectedId = state.items[0]?.id || null;
+      invalidateContourCache();
+      renderAll();
+    }
+
+    function pushHistory() {
+      state.history.push(snapshotLayout());
+      if (state.history.length > 50) state.history.shift();
+      state.future = [];
     }
 
     function showNotice(text) {
@@ -576,6 +756,8 @@
           points: tool.points,
           width: tool.width,
           height: tool.height,
+          accepted: !!tool.accepted,
+          sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
           defaultPulls: clonePulls(tool.defaultPulls),
           preview: tool.preview,
           previewLarge: includeLargePreviews ? tool.previewLarge : ""
@@ -586,6 +768,7 @@
           x: item.x,
           y: item.y,
           rot: item.rot,
+          locked: !!item.locked,
           pulls: clonePulls(itemPulls(item))
         })),
         selectedId: state.selectedId
@@ -615,6 +798,8 @@
         points: Array.isArray(tool.points) ? tool.points : [],
         width: Number(tool.width) || 0,
         height: Number(tool.height) || 0,
+        accepted: !!tool.accepted,
+        sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
         defaultPulls: clonePulls(tool.defaultPulls || []),
         preview: tool.preview || "",
         previewLarge: tool.previewLarge || tool.preview || ""
@@ -626,6 +811,7 @@
         x: Number(item.x) || 0,
         y: Number(item.y) || 0,
         rot: Number(item.rot) || 0,
+        locked: !!item.locked,
         pulls: clonePulls(item.pulls || [])
       })).filter(item => toolIds.has(item.toolId));
       state.selectedId = state.items.some(item => item.id === project.selectedId) ? project.selectedId : (state.items[0]?.id || null);
@@ -633,6 +819,7 @@
       invalidateContourCache();
       fitView();
       renderAll();
+      updateWorkflow();
     }
 
     function saveProject(auto = false) {
@@ -707,14 +894,56 @@
 
     function showPreview(tool) {
       if (!tool) return;
+      state.previewToolId = tool.id;
       el.previewTitle.textContent = `${tool.name} - ${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm`;
       el.previewImage.src = tool.previewLarge || tool.preview;
+      el.acceptPreview.textContent = tool.accepted ? "Accepted" : "Accept Contour";
       el.previewModal.classList.remove("hidden");
     }
 
     function hidePreview() {
       el.previewModal.classList.add("hidden");
       el.previewImage.removeAttribute("src");
+      state.previewToolId = null;
+    }
+
+    function acceptTool(toolId) {
+      const tool = getTool(toolId);
+      if (!tool) return;
+      tool.accepted = true;
+      renderAll();
+      updateWorkflow();
+      showNotice(`${tool.name} contour accepted.`);
+    }
+
+    function nextUnacceptedTool() {
+      return state.tools.find(t => !t.accepted) || null;
+    }
+
+    async function reprocessTool(toolId) {
+      const tool = getTool(toolId);
+      if (!tool || !Number.isFinite(tool.sourceIndex) || !state.files[tool.sourceIndex]) {
+        showNotice("Original upload is not available. Import or upload the image again to reprocess.");
+        return;
+      }
+      showBusy("Reprocessing contour...", tool.name);
+      await nextFrame();
+      try {
+        const fresh = await processFile(state.files[tool.sourceIndex], tool.sourceIndex);
+        Object.assign(tool, fresh, { id: tool.id, name: tool.name, accepted: false, sourceIndex: tool.sourceIndex });
+        state.items.filter(i => i.toolId === tool.id).forEach(i => {
+          i.pulls = clonePulls(tool.defaultPulls);
+          invalidateContourCache(i);
+        });
+        showPreview(tool);
+        renderAll();
+        updateWorkflow();
+        showNotice(`${tool.name} reprocessed. Review the contour again.`);
+      } catch (err) {
+        showNotice("Could not reprocess contour: " + err.message);
+      } finally {
+        hideBusy();
+      }
     }
 
     function loadImage(file) {
@@ -1338,6 +1567,8 @@
         points: norm.points,
         width: norm.width,
         height: norm.height,
+        accepted: false,
+        sourceIndex: index,
         defaultPulls: defaultFingerPulls(norm.points, norm.width, norm.height, Number(el.fingerInput.value)),
         preview: previewCanvas(page, contour, 170, 220),
         previewLarge: previewCanvas(page, contour, 760, 980)
@@ -1421,12 +1652,14 @@
     }
 
     function addToolToLayout(tool) {
+      pushHistory();
       const item = {
         id: "item-" + Date.now() + "-" + Math.random().toString(16).slice(2),
         toolId: tool.id,
         x: 20 + state.items.length * 12,
         y: 20 + state.items.length * 12,
         rot: 0,
+        locked: false,
         pulls: clonePulls(tool.defaultPulls)
       };
       state.items.push(item);
@@ -1446,8 +1679,9 @@
       el.toolList.innerHTML = "";
       state.tools.forEach(tool => {
         const d = document.createElement("div");
-        d.className = "item";
-        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm</span><div class="itemActions"><button data-action="preview">Preview</button><button data-action="add">Add</button><button class="danger" data-action="delete">Delete</button></div></div>`;
+        d.className = "item" + (tool.accepted ? " accepted" : "");
+        const badge = tool.accepted ? `<span class="badge ok">Accepted</span>` : `<span class="badge warn">Needs review</span>`;
+        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm</span>${badge}<div class="itemActions"><button data-action="preview">Review</button><button data-action="add">Add</button><button class="danger" data-action="delete">Delete</button></div></div>`;
         d.querySelector('[data-action="add"]').addEventListener("click", ev => {
           ev.stopPropagation();
           addToolToLayout(tool);
@@ -1474,7 +1708,8 @@
         if (!tool) return;
         const d = document.createElement("div");
         d.className = "item" + (item.id === state.selectedId ? " active" : "");
-        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>X ${item.x.toFixed(0)} / Y ${item.y.toFixed(0)} / R ${item.rot.toFixed(0)}</span><div class="itemActions two"><button data-action="preview">Preview</button><button class="danger" data-action="delete">Delete</button></div></div>`;
+        const locked = item.locked ? `<span class="badge warn">Locked</span>` : "";
+        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>X ${item.x.toFixed(0)} / Y ${item.y.toFixed(0)} / R ${item.rot.toFixed(0)}</span>${locked}<div class="itemActions two"><button data-action="preview">Preview</button><button class="danger" data-action="delete">Delete</button></div></div>`;
         d.addEventListener("click", () => {
           state.selectedId = item.id;
           el.rotInput.value = item.rot.toFixed(0);
@@ -1493,6 +1728,7 @@
     }
 
     function deleteTool(toolId) {
+      pushHistory();
       const tool = getTool(toolId);
       state.tools = state.tools.filter(t => t.id !== toolId);
       state.items = state.items.filter(i => i.toolId !== toolId);
@@ -1504,6 +1740,7 @@
     }
 
     function deleteLayoutItem(itemId) {
+      pushHistory();
       const item = state.items.find(i => i.id === itemId);
       const tool = item ? getTool(item.toolId) : null;
       state.items = state.items.filter(i => i.id !== itemId);
@@ -1925,6 +2162,16 @@
           const aspect = Math.max(fp0.width, fp0.height) / Math.max(1, Math.min(fp0.width, fp0.height));
           return { item, order, area, width: Math.max(fp0.width, fp90.width), height: Math.max(fp0.height, fp90.height), aspect };
         });
+      const lockedPlacements = entries.filter(entry => entry.item.locked).map(entry => {
+        const option = {
+          rot: entry.item.rot,
+          fp: rotatedFootprint(entry.item, entry.item.rot),
+          polygons: rotatedCollisionPolygons(entry.item, entry.item.rot)
+        };
+        const fp = option.fp;
+        return makePlacement(entry, option, entry.item.x + fp.x0, entry.item.y + fp.y0);
+      });
+      const arrangeEntries = entries.filter(entry => !entry.item.locked);
 
       function makePlacement(entry, option, x, y) {
         const bbox = { x0: x, y0: y, x1: x + option.fp.width, y1: y + option.fp.height };
@@ -1948,7 +2195,7 @@
       }
 
       function safeShelfArrange(arranged) {
-        const placed = [];
+        const placed = lockedPlacements.map(p => ({ ...p, polygons: p.polygons.map(poly => poly.map(pt => ({ ...pt }))) }));
         let x = gap;
         let y = gap;
         let rowH = 0;
@@ -1999,7 +2246,7 @@
       }
 
       function fastBboxArrange(arranged) {
-        const placed = [];
+        const placed = lockedPlacements.map(p => ({ ...p, polygons: p.polygons.map(poly => poly.map(pt => ({ ...pt }))) }));
         const bboxTooClose = (a, b) =>
           a.x0 < b.x1 + gap - 0.01 &&
           a.x1 > b.x0 - gap + 0.01 &&
@@ -2040,7 +2287,7 @@
       }
 
       async function arrangeOrder(arranged, orderIndex, totalOrders) {
-        const placed = [];
+        const placed = lockedPlacements.map(p => ({ ...p, polygons: p.polygons.map(poly => poly.map(pt => ({ ...pt }))) }));
         for (let entryIndex = 0; entryIndex < arranged.length; entryIndex++) {
           const entry = arranged[entryIndex];
           const orderProgress = (orderIndex / totalOrders) * 100;
@@ -2107,7 +2354,7 @@
         updateBusy("Compacting layout...", `Pass ${orderIndex + 1}/${totalOrders}. Sliding parts into open spaces.`, ((orderIndex + 0.85) / totalOrders) * 100);
         await nextFrame();
         compactPlacements(placed, gap, dw, dh, shouldStop);
-        if (placed.length < arranged.length) {
+        if (placed.length < arranged.length + lockedPlacements.length) {
           stoppedByTime = true;
           return null;
         }
@@ -2131,15 +2378,15 @@
 
       try {
         const orders = [
-          [...entries].sort((a, b) => b.area - a.area || a.order - b.order),
-          [...entries].sort((a, b) => b.height - a.height || b.area - a.area),
-          [...entries].sort((a, b) => b.width - a.width || b.area - a.area),
-          [...entries].sort((a, b) => b.aspect - a.aspect || b.area - a.area),
-          [...entries].sort((a, b) => a.order - b.order)
+          [...arrangeEntries].sort((a, b) => b.area - a.area || a.order - b.order),
+          [...arrangeEntries].sort((a, b) => b.height - a.height || b.area - a.area),
+          [...arrangeEntries].sort((a, b) => b.width - a.width || b.area - a.area),
+          [...arrangeEntries].sort((a, b) => b.aspect - a.aspect || b.area - a.area),
+          [...arrangeEntries].sort((a, b) => a.order - b.order)
         ];
         updateBusy("Arranging contours...", "Creating fast inside-board baseline layout.", 4);
         await nextFrame();
-        const baselineOrder = [...entries].sort((a, b) => b.height - a.height || b.area - a.area);
+        const baselineOrder = [...arrangeEntries].sort((a, b) => b.height - a.height || b.area - a.area);
         let result = fastBboxArrange(baselineOrder) || safeShelfArrange(baselineOrder);
         for (let orderIndex = 0; orderIndex < orders.length; orderIndex++) {
           const order = orders[orderIndex];
@@ -2247,6 +2494,9 @@
       drawLayout();
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
+      el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
+      renderExportReport();
+      updateWorkflow();
       scheduleAutosave();
     }
 
@@ -2323,6 +2573,13 @@
         showNotice("No layout items to export. Add at least one detected tool first.");
         return;
       }
+      const report = validateLayout();
+      state.lastArrangeReport = report;
+      renderExportReport();
+      if (!report.ready) {
+        showNotice("Export blocked: fix the red/yellow checklist items before drawer DXF export.");
+        return;
+      }
       const ents = [];
       state.items.forEach((item, idx) => {
         const tool = getTool(item.toolId);
@@ -2335,6 +2592,63 @@
       const dxf = makeDxf(ents, { w: Number(el.drawerW.value), h: Number(el.drawerH.value) });
       download(`${safeFileBase(cleanProjectName())}_layout.dxf`, dxf);
       showNotice(`Success: exported drawer DXF with ${state.items.length} single-contour cutout(s).`);
+    }
+
+    function validateLayout() {
+      const dw = Number(el.drawerW.value);
+      const dh = Number(el.drawerH.value);
+      const spacing = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
+      const cutPolys = state.items.map(item => ({ item, points: combinedLocalPoints(item).map(p => transformPoint(p, item)) }));
+      const issues = [];
+      let minGap = Infinity;
+      cutPolys.forEach(({ item, points }) => {
+        const tool = getTool(item.toolId);
+        const b = bboxPoints(points);
+        if (b.x0 < -0.01 || b.y0 < -0.01 || b.x1 > dw + 0.01 || b.y1 > dh + 0.01) {
+          issues.push(`${tool?.name || "Tool"} is outside the drawer.`);
+        }
+      });
+      for (let i = 0; i < cutPolys.length; i++) {
+        for (let j = i + 1; j < cutPolys.length; j++) {
+          const a = cutPolys[i].points;
+          const b = cutPolys[j].points;
+          for (let ai = 0; ai < a.length - 1; ai++) {
+            for (let bi = 0; bi < b.length - 1; bi++) {
+              minGap = Math.min(minGap, segmentDistance(a[ai], a[ai + 1], b[bi], b[bi + 1]));
+              if (minGap < spacing - 0.01) break;
+            }
+            if (minGap < spacing - 0.01) break;
+          }
+          if (minGap < spacing - 0.01) issues.push("Cut contours are closer than arrange spacing.");
+        }
+      }
+      if (acceptedCount() < state.tools.length) issues.push(`${state.tools.length - acceptedCount()} contour(s) still need review.`);
+      const bounds = cutPolys.length ? bboxPoints(cutPolys.flatMap(c => c.points)) : { x0: 0, y0: 0, x1: 0, y1: 0 };
+      const usedArea = Math.max(0, bounds.x1 - bounds.x0) * Math.max(0, bounds.y1 - bounds.y0);
+      const drawerArea = Math.max(1, dw * dh);
+      return {
+        ready: !issues.length && !!state.items.length,
+        placed: state.items.length,
+        accepted: acceptedCount(),
+        totalTools: state.tools.length,
+        minGap: Number.isFinite(minGap) ? minGap : null,
+        usedPercent: usedArea / drawerArea * 100,
+        issues
+      };
+    }
+
+    function renderExportReport() {
+      if (!el.exportReport) return;
+      const report = validateLayout();
+      const gapText = report.minGap == null ? "n/a" : `${report.minGap.toFixed(1)} mm`;
+      const issueText = report.issues.length ? report.issues.slice(0, 3).map(i => `<div>${escapeHtml(i)}</div>`).join("") : "<div>Ready for drawer DXF export.</div>";
+      el.exportReport.innerHTML = `
+        <strong>${report.ready ? "Export ready" : "Check before export"}</strong>
+        <div>${report.placed} layout item(s), ${report.accepted}/${report.totalTools} contour(s) accepted</div>
+        <div>Minimum spacing: ${gapText}</div>
+        <div>Used board area: ${report.usedPercent.toFixed(1)}%</div>
+        ${issueText}
+      `;
     }
 
     function exportSelected() {
@@ -2353,6 +2667,25 @@
     el.fileInput.addEventListener("change", () => {
       state.files = Array.from(el.fileInput.files || []);
       setStatus(`${state.files.length} image(s) ready.`);
+      showPanel("setup");
+      setWorkflow("upload");
+    });
+
+    el.panelButtons.forEach(btn => {
+      btn.addEventListener("click", () => showPanel(btn.dataset.panelBtn));
+    });
+
+    el.acceptAllContours.addEventListener("click", () => {
+      state.tools.forEach(tool => { tool.accepted = true; });
+      renderAll();
+      showPanel("review");
+      showNotice(`${state.tools.length} contour(s) accepted.`);
+    });
+
+    el.reviewNextContour.addEventListener("click", () => {
+      const tool = nextUnacceptedTool();
+      if (tool) showPreview(tool);
+      else showNotice("No detected tools to review.");
     });
 
     el.saveProject.addEventListener("click", () => saveProject(false));
@@ -2381,6 +2714,8 @@
           addToolToLayout(tool);
         }
         await autoArrangeAll();
+        showPanel("review");
+        showPreview(nextUnacceptedTool());
         setStatus("Done. Drag tools in the drawer and export DXF.");
       } catch (err) {
         console.error(err);
@@ -2397,6 +2732,7 @@
       const pullHit = hitTestPull(world);
       if (pullHit) {
         state.selectedId = pullHit.item.id;
+        pushHistory();
         state.drag = { mode: "pull", id: pullHit.item.id, pullIndex: pullHit.pullIndex };
         renderAll();
         return;
@@ -2404,7 +2740,10 @@
       const hit = hitTest(world);
       if (hit) {
         state.selectedId = hit.id;
-        state.drag = { mode: "item", id: hit.id, dx: world.x - hit.x, dy: world.y - hit.y };
+        if (!hit.locked) {
+          pushHistory();
+          state.drag = { mode: "item", id: hit.id, dx: world.x - hit.x, dy: world.y - hit.y };
+        }
       } else {
         state.selectedId = null;
         state.drag = null;
@@ -2453,18 +2792,49 @@
         showNotice("Select a layout item before duplicating.");
         return;
       }
+      pushHistory();
       const copy = { ...item, id: "item-" + Date.now(), x: item.x + 15, y: item.y + 15, pulls: clonePulls(itemPulls(item)) };
+      copy.locked = false;
       clampItemToDrawer(copy);
       state.items.push(copy);
       state.selectedId = copy.id;
       renderAll();
       showNotice("Selected item duplicated.");
     });
+    el.lockSelected.addEventListener("click", () => {
+      const item = getSelectedItem();
+      if (!item) {
+        showNotice("Select a layout item before locking.");
+        return;
+      }
+      item.locked = !item.locked;
+      renderAll();
+      showNotice(item.locked ? "Selected item locked." : "Selected item unlocked.");
+    });
+    el.undoLayout.addEventListener("click", () => {
+      if (!state.history.length) {
+        showNotice("Nothing to undo.");
+        return;
+      }
+      state.future.push(snapshotLayout());
+      restoreLayout(state.history.pop());
+      showNotice("Undo applied.");
+    });
+    el.redoLayout.addEventListener("click", () => {
+      if (!state.future.length) {
+        showNotice("Nothing to redo.");
+        return;
+      }
+      state.history.push(snapshotLayout());
+      restoreLayout(state.future.pop());
+      showNotice("Redo applied.");
+    });
     el.rotateLeft.addEventListener("click", () => rotateSelected(-15));
     el.rotateRight.addEventListener("click", () => rotateSelected(15));
     el.rotInput.addEventListener("input", () => {
       const item = getSelectedItem();
       if (!item) return;
+      pushHistory();
       item.rot = Number(el.rotInput.value) || 0;
       clampItemToDrawer(item);
       drawLayout();
@@ -2483,10 +2853,26 @@
         showNotice("Select a layout item before rotating.");
         return;
       }
+      pushHistory();
       item.rot = (item.rot + delta) % 360;
       clampItemToDrawer(item);
       renderAll();
     }
+
+    el.acceptPreview.addEventListener("click", () => {
+      if (state.previewToolId) acceptTool(state.previewToolId);
+      hidePreview();
+      const next = nextUnacceptedTool();
+      if (next && next.id !== state.previewToolId) showPreview(next);
+    });
+    el.deletePreview.addEventListener("click", () => {
+      const id = state.previewToolId;
+      hidePreview();
+      if (id) deleteTool(id);
+    });
+    el.reprocessPreview.addEventListener("click", () => {
+      if (state.previewToolId) reprocessTool(state.previewToolId);
+    });
 
     el.closePreview.addEventListener("click", hidePreview);
     el.previewModal.addEventListener("click", ev => {
@@ -2494,6 +2880,23 @@
     });
     window.addEventListener("keydown", ev => {
       if (ev.key === "Escape" && !el.previewModal.classList.contains("hidden")) hidePreview();
+      if (el.previewModal.classList.contains("hidden")) {
+        const item = getSelectedItem();
+        if (!item || item.locked || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName || "")) return;
+        const step = ev.shiftKey ? 10 : 1;
+        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Backspace"].includes(ev.key)) ev.preventDefault();
+        if (ev.key === "Delete" || ev.key === "Backspace") {
+          deleteLayoutItem(item.id);
+        } else if (ev.key.startsWith("Arrow")) {
+          pushHistory();
+          if (ev.key === "ArrowLeft") item.x -= step;
+          if (ev.key === "ArrowRight") item.x += step;
+          if (ev.key === "ArrowUp") item.y -= step;
+          if (ev.key === "ArrowDown") item.y += step;
+          clampItemToDrawer(item);
+          renderAll();
+        }
+      }
     });
 
     try {
