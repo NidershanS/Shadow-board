@@ -1600,6 +1600,28 @@
       return pts;
     }
 
+    function transformedItemBounds(item) {
+      return bboxPoints(itemLayoutPoints(item).map(p => transformPoint(p, item)));
+    }
+
+    function clampItemToDrawer(item) {
+      const dw = Number(el.drawerW.value);
+      const dh = Number(el.drawerH.value);
+      if (!Number.isFinite(dw) || !Number.isFinite(dh)) return false;
+      const b = transformedItemBounds(item);
+      let dx = 0, dy = 0;
+      if (b.x0 < 0) dx = -b.x0;
+      if (b.x1 + dx > dw) dx = dw - b.x1;
+      if (b.y0 < 0) dy = -b.y0;
+      if (b.y1 + dy > dh) dy = dh - b.y1;
+      if (dx || dy) {
+        item.x += dx;
+        item.y += dy;
+        return true;
+      }
+      return false;
+    }
+
     function rotatedFootprint(item, rot) {
       const tool = getTool(item.toolId);
       const cx = tool.width / 2, cy = tool.height / 2;
@@ -1929,6 +1951,12 @@
           let best = null;
           for (const option of rotationOptions) {
             if (shouldStop()) break;
+            updateBusy(
+              "Arranging contours...",
+              `Pass ${orderIndex + 1}/${totalOrders}, item ${entryIndex + 1}/${arranged.length}, orientation ${option.rot} deg.`,
+              orderProgress + itemProgress
+            );
+            await nextFrame();
             const candidates = candidatePositions(placed, gap, option);
             for (const candidate of candidates) {
               if (shouldStop()) {
@@ -2279,9 +2307,11 @@
           const pulls = itemPulls(item);
           snapPullToContour(pulls[state.drag.pullIndex], item, local);
           invalidateContourCache(item);
+          clampItemToDrawer(item);
         } else {
           item.x = world.x - state.drag.dx;
           item.y = world.y - state.drag.dy;
+          clampItemToDrawer(item);
         }
         drawLayout();
       }
@@ -2308,6 +2338,7 @@
         return;
       }
       const copy = { ...item, id: "item-" + Date.now(), x: item.x + 15, y: item.y + 15, pulls: clonePulls(itemPulls(item)) };
+      clampItemToDrawer(copy);
       state.items.push(copy);
       state.selectedId = copy.id;
       renderAll();
@@ -2319,6 +2350,7 @@
       const item = getSelectedItem();
       if (!item) return;
       item.rot = Number(el.rotInput.value) || 0;
+      clampItemToDrawer(item);
       drawLayout();
     });
 
@@ -2336,6 +2368,7 @@
         return;
       }
       item.rot = (item.rot + delta) % 360;
+      clampItemToDrawer(item);
       renderAll();
     }
 
