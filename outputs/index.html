@@ -173,6 +173,7 @@
     .canvasWrap {
       min-width: 0;
       min-height: 0;
+      position: relative;
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -186,6 +187,44 @@
       min-height: 560px;
       border-radius: 4px;
       background: var(--foam);
+    }
+    .canvasLegend {
+      position: absolute;
+      left: 20px;
+      bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: calc(100% - 40px);
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 8px 24px rgba(23, 32, 38, 0.1);
+      font-size: 12px;
+      color: var(--muted);
+      pointer-events: none;
+    }
+    .legendItem {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .legendLine,
+    .legendCircle {
+      width: 18px;
+      height: 0;
+      border-top: 2px solid #1f2529;
+    }
+    .legendCircle {
+      width: 13px;
+      height: 13px;
+      border: 2px solid #d0161c;
+      border-radius: 50%;
+    }
+    .legendLine.selected {
+      border-top-color: #d0161c;
     }
     .inspector {
       min-width: 0;
@@ -264,6 +303,23 @@
       min-height: 30px;
       padding: 5px 6px;
       font-size: 12px;
+    }
+    .advancedSettings {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      padding: 8px 10px;
+    }
+    .advancedSettings summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .advancedBody {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
     }
     button.danger {
       color: #fff;
@@ -388,6 +444,14 @@
       border: 1px solid var(--line);
       background: #fff;
     }
+    .modalBody canvas {
+      width: 100%;
+      max-width: 760px;
+      height: 420px;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
     .modalTools {
       display: flex;
       flex-wrap: wrap;
@@ -396,6 +460,12 @@
       padding: 10px 12px;
       border-top: 1px solid var(--line);
       background: #fff;
+    }
+    .previewMeta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
     }
     .report {
       display: grid;
@@ -449,24 +519,29 @@
               <option value="a3">A3 - 297 x 420 mm</option>
             </select>
           </label>
-          <div class="grid2">
-            <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
-            <label>Metal repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
-          </div>
-          <div class="grid2">
-            <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
-            <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
-          </div>
-          <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
+          <details class="advancedSettings">
+            <summary>Advanced contour settings</summary>
+            <div class="advancedBody">
+              <div class="grid2">
+                <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
+                <label>Gap repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
+              </div>
+              <div class="grid2">
+                <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
+                <label>DXF point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
+              </div>
+              <label>Finger pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
+            </div>
+          </details>
           <button id="processBtn" class="primary">Detect Contours</button>
         </div>
         <div class="panel hidden" data-panel="review">
-          <div class="status">Review each red contour before adding tools to the drawer.</div>
+          <div class="status">Review each contour, accept the good ones, then add them to the drawer when you are ready.</div>
           <div class="btns">
-            <button id="acceptAllContours" class="secondary">Accept All</button>
-            <button id="reviewNextContour">Review Next</button>
+            <button id="acceptAllContours" class="secondary">Accept all</button>
+            <button id="reviewNextContour">Review next</button>
           </div>
-          <button id="addAcceptedToDrawer" class="primary">Add Accepted to Drawer</button>
+          <button id="addAcceptedToDrawer" class="primary">Add accepted tools</button>
           <h2>Detected Tools</h2>
           <div id="toolList"></div>
         </div>
@@ -493,7 +568,7 @@
         <label>Drawer height mm<input id="drawerH" type="number" value="390" min="50" step="1"></label>
         <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
         <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
-        <label>Arrange max sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
+        <label>Arrange time limit sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
         <button id="autoArrange">Arrange Now</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
         <button id="zoomOut">Zoom -</button>
@@ -504,6 +579,11 @@
       <section class="stage">
         <div class="canvasWrap">
           <canvas id="layoutCanvas"></canvas>
+          <div class="canvasLegend" aria-hidden="true">
+            <span class="legendItem"><span class="legendLine"></span>Cut contour</span>
+            <span class="legendItem"><span class="legendLine selected"></span>Selected tool</span>
+            <span class="legendItem"><span class="legendCircle"></span>Finger pull</span>
+          </div>
         </div>
         <div class="inspector">
           <h2>Arrange</h2>
@@ -513,7 +593,7 @@
             <button id="rotateRight">Rotate +15</button>
           </div>
           <div class="btns">
-            <button id="downloadSelected">Export Tool DXF</button>
+            <button id="downloadSelected">Export selected DXF</button>
             <button id="duplicateSelected">Duplicate</button>
           </div>
           <div class="btns">
@@ -541,7 +621,10 @@
   <div id="previewModal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modalPanel">
       <div class="modalTop">
-        <strong id="previewTitle">Detected tool preview</strong>
+        <div>
+          <strong id="previewTitle">Detected tool preview</strong>
+          <div id="previewMeta" class="previewMeta"></div>
+        </div>
         <button id="closePreview">Close</button>
       </div>
       <div class="modalBody">
@@ -549,8 +632,25 @@
       </div>
       <div class="modalTools">
         <button id="reprocessPreview">Reprocess</button>
-        <button id="deletePreview" class="danger">Delete</button>
-        <button id="acceptPreview" class="secondary">Accept Contour</button>
+        <button id="deletePreview" class="danger">Reject / delete</button>
+        <button id="acceptPreview" class="secondary">Accept contour</button>
+      </div>
+    </div>
+  </div>
+  <div id="exportModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modalPanel">
+      <div class="modalTop">
+        <div>
+          <strong>Drawer DXF preview</strong>
+          <div id="exportSummary" class="previewMeta"></div>
+        </div>
+        <button id="closeExportPreview">Cancel</button>
+      </div>
+      <div class="modalBody">
+        <canvas id="exportPreviewCanvas"></canvas>
+      </div>
+      <div class="modalTools">
+        <button id="confirmExport" class="primary">Download DXF</button>
       </div>
     </div>
   </div>
@@ -569,6 +669,8 @@
       items: [],
       selectedId: null,
       previewToolId: null,
+      pendingLayoutDxf: null,
+      pendingLayoutName: null,
       scale: 1,
       viewX: 20,
       viewY: 20,
@@ -629,11 +731,17 @@
       busyProgress: document.getElementById("busyProgress"),
       previewModal: document.getElementById("previewModal"),
       previewTitle: document.getElementById("previewTitle"),
+      previewMeta: document.getElementById("previewMeta"),
       previewImage: document.getElementById("previewImage"),
       closePreview: document.getElementById("closePreview"),
       acceptPreview: document.getElementById("acceptPreview"),
       deletePreview: document.getElementById("deletePreview"),
-      reprocessPreview: document.getElementById("reprocessPreview")
+      reprocessPreview: document.getElementById("reprocessPreview"),
+      exportModal: document.getElementById("exportModal"),
+      exportSummary: document.getElementById("exportSummary"),
+      exportPreviewCanvas: document.getElementById("exportPreviewCanvas"),
+      closeExportPreview: document.getElementById("closeExportPreview"),
+      confirmExport: document.getElementById("confirmExport")
     };
     const ctx = el.canvas.getContext("2d");
 
@@ -908,14 +1016,18 @@
     function showPreview(tool) {
       if (!tool) return;
       state.previewToolId = tool.id;
-      el.previewTitle.textContent = `${tool.name} - ${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm`;
+      const index = Math.max(0, state.tools.findIndex(t => t.id === tool.id));
+      const status = tool.accepted ? "Accepted" : "Needs review";
+      el.previewTitle.textContent = tool.name;
+      el.previewMeta.textContent = `Contour ${index + 1} of ${state.tools.length} | ${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm | ${status}`;
       el.previewImage.src = tool.previewLarge || tool.preview;
-      el.acceptPreview.textContent = tool.accepted ? "Accepted" : "Accept Contour";
+      el.acceptPreview.textContent = tool.accepted ? "Accepted" : "Accept contour";
       el.previewModal.classList.remove("hidden");
     }
 
     function hidePreview() {
       el.previewModal.classList.add("hidden");
+      el.previewMeta.textContent = "";
       el.previewImage.removeAttribute("src");
       state.previewToolId = null;
     }
@@ -2693,17 +2805,15 @@
       return lines.join("\n");
     }
 
-    function exportLayout() {
+    function buildLayoutExportData() {
       if (!state.items.length) {
-        showNotice("No layout items to export. Add at least one detected tool first.");
-        return;
+        return { error: "No layout items to export. Add at least one accepted tool to the drawer first." };
       }
       const report = validateLayout();
       state.lastArrangeReport = report;
       renderExportReport();
       if (!report.ready) {
-        showNotice("Export blocked: fix the red/yellow checklist items before drawer DXF export.");
-        return;
+        return { error: "Export blocked: fix the red/yellow checklist items before drawer DXF export.", report };
       }
       const ents = [];
       state.items.forEach((item, idx) => {
@@ -2714,9 +2824,83 @@
           points: combinedLocalPoints(item).map(p => transformPoint(p, item))
         });
       });
-      const dxf = makeDxf(ents, { w: Number(el.drawerW.value), h: Number(el.drawerH.value) });
-      download(`${safeFileBase(cleanProjectName())}_layout.dxf`, dxf);
-      showNotice(`Success: exported drawer DXF with ${state.items.length} single-contour cutout(s).`);
+      const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
+      const dxf = makeDxf(ents, drawer);
+      return {
+        dxf,
+        ents,
+        drawer,
+        report,
+        name: `${safeFileBase(cleanProjectName())}_layout.dxf`
+      };
+    }
+
+    function showExportPreview(data) {
+      state.pendingLayoutDxf = data.dxf;
+      state.pendingLayoutName = data.name;
+      const spacing = Number.isFinite(data.report.minGap) ? `${data.report.minGap.toFixed(1)} mm min gap` : "Spacing not measured";
+      el.exportSummary.textContent = `${data.drawer.w} x ${data.drawer.h} mm drawer | ${data.ents.length} tool cutout(s) | ${spacing} | finger pulls included`;
+      el.exportModal.classList.remove("hidden");
+      drawExportPreview(data.ents, data.drawer);
+    }
+
+    function hideExportPreview() {
+      el.exportModal.classList.add("hidden");
+      state.pendingLayoutDxf = null;
+      state.pendingLayoutName = null;
+    }
+
+    function drawExportPreview(ents, drawer) {
+      const canvas = el.exportPreviewCanvas;
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const cssW = 760;
+      const cssH = 420;
+      canvas.width = cssW * dpr;
+      canvas.height = cssH * dpr;
+      const pctx = canvas.getContext("2d");
+      pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      pctx.clearRect(0, 0, cssW, cssH);
+      pctx.fillStyle = "#ffffff";
+      pctx.fillRect(0, 0, cssW, cssH);
+      const pad = 24;
+      const scale = Math.min((cssW - pad * 2) / drawer.w, (cssH - pad * 2) / drawer.h);
+      const ox = (cssW - drawer.w * scale) / 2;
+      const oy = (cssH - drawer.h * scale) / 2;
+      pctx.strokeStyle = "#1f2529";
+      pctx.lineWidth = 1.5;
+      pctx.strokeRect(ox, oy, drawer.w * scale, drawer.h * scale);
+      pctx.strokeStyle = "#d3dde3";
+      pctx.lineWidth = 1;
+      for (let x = 50; x < drawer.w; x += 50) {
+        pctx.beginPath();
+        pctx.moveTo(ox + x * scale, oy);
+        pctx.lineTo(ox + x * scale, oy + drawer.h * scale);
+        pctx.stroke();
+      }
+      for (let y = 50; y < drawer.h; y += 50) {
+        pctx.beginPath();
+        pctx.moveTo(ox, oy + y * scale);
+        pctx.lineTo(ox + drawer.w * scale, oy + y * scale);
+        pctx.stroke();
+      }
+      pctx.strokeStyle = "#111";
+      pctx.lineWidth = 1.6;
+      ents.forEach(ent => {
+        if (!ent.points.length) return;
+        pctx.beginPath();
+        pctx.moveTo(ox + ent.points[0].x * scale, oy + ent.points[0].y * scale);
+        ent.points.slice(1).forEach(p => pctx.lineTo(ox + p.x * scale, oy + p.y * scale));
+        pctx.stroke();
+      });
+    }
+
+    function exportLayout() {
+      const data = buildLayoutExportData();
+      if (data.error) {
+        showNotice(data.error);
+        return;
+      }
+      showExportPreview(data);
     }
 
     function validateLayout() {
@@ -2996,10 +3180,15 @@
     }
 
     el.acceptPreview.addEventListener("click", () => {
-      if (state.previewToolId) acceptTool(state.previewToolId);
-      hidePreview();
+      const acceptedId = state.previewToolId;
+      if (acceptedId) acceptTool(acceptedId);
       const next = nextUnacceptedTool();
-      if (next && next.id !== state.previewToolId) showPreview(next);
+      if (next && next.id !== acceptedId) {
+        showPreview(next);
+      } else {
+        hidePreview();
+        showNotice("All contours reviewed. Add accepted tools when ready.");
+      }
     });
     el.deletePreview.addEventListener("click", () => {
       const id = state.previewToolId;
@@ -3014,9 +3203,27 @@
     el.previewModal.addEventListener("click", ev => {
       if (ev.target === el.previewModal) hidePreview();
     });
+    el.closeExportPreview.addEventListener("click", hideExportPreview);
+    el.exportModal.addEventListener("click", ev => {
+      if (ev.target === el.exportModal) hideExportPreview();
+    });
+    el.confirmExport.addEventListener("click", () => {
+      if (!state.pendingLayoutDxf || !state.pendingLayoutName) {
+        showNotice("No drawer DXF is ready yet. Run export again.");
+        return;
+      }
+      const count = state.items.length;
+      download(state.pendingLayoutName, state.pendingLayoutDxf);
+      hideExportPreview();
+      showNotice(`Success: exported drawer DXF with ${count} single-contour cutout(s).`);
+    });
     window.addEventListener("keydown", ev => {
+      if (ev.key === "Escape" && !el.exportModal.classList.contains("hidden")) {
+        hideExportPreview();
+        return;
+      }
       if (ev.key === "Escape" && !el.previewModal.classList.contains("hidden")) hidePreview();
-      if (el.previewModal.classList.contains("hidden")) {
+      if (el.previewModal.classList.contains("hidden") && el.exportModal.classList.contains("hidden")) {
         const item = getSelectedItem();
         if (!item || item.locked || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName || "")) return;
         const step = ev.shiftKey ? 10 : 1;
