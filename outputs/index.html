@@ -267,6 +267,26 @@
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+    .busyDetail {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    .progressTrack {
+      width: 220px;
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #dce4e8;
+    }
+    .progressBar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.18s ease;
+    }
     .modal {
       position: fixed;
       inset: 0;
@@ -373,6 +393,7 @@
         <label>Drawer height mm<input id="drawerH" type="number" value="390" min="50" step="1"></label>
         <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
         <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
+        <label>Arrange max sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
         <button id="autoArrange">Auto Arrange All</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
         <button id="zoomOut">Zoom -</button>
@@ -407,6 +428,8 @@
     <div class="busyBox">
       <div class="spinner" aria-hidden="true"></div>
       <strong id="busyText">Working...</strong>
+      <div id="busyDetail" class="busyDetail">Please wait...</div>
+      <div class="progressTrack" aria-hidden="true"><div id="busyProgress" class="progressBar"></div></div>
     </div>
   </div>
   <div id="previewModal" class="modal hidden" role="dialog" aria-modal="true">
@@ -456,6 +479,7 @@
       paperSize: document.getElementById("paperSize"),
       projectName: document.getElementById("projectName"),
       arrangeSpacingInput: document.getElementById("arrangeSpacingInput"),
+      arrangeTimeInput: document.getElementById("arrangeTimeInput"),
       saveProject: document.getElementById("saveProject"),
       loadProject: document.getElementById("loadProject"),
       newProject: document.getElementById("newProject"),
@@ -475,6 +499,8 @@
       toast: document.getElementById("toast"),
       busyOverlay: document.getElementById("busyOverlay"),
       busyText: document.getElementById("busyText"),
+      busyDetail: document.getElementById("busyDetail"),
+      busyProgress: document.getElementById("busyProgress"),
       previewModal: document.getElementById("previewModal"),
       previewTitle: document.getElementById("previewTitle"),
       previewImage: document.getElementById("previewImage"),
@@ -498,13 +524,22 @@
       return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }
 
-    function showBusy(text) {
+    function showBusy(text, detail = "") {
       el.busyText.textContent = text;
+      el.busyDetail.textContent = detail;
+      el.busyProgress.style.width = "0%";
       el.busyOverlay.classList.remove("hidden");
+    }
+
+    function updateBusy(text, detail = "", progress = 0) {
+      if (text) el.busyText.textContent = text;
+      el.busyDetail.textContent = detail;
+      el.busyProgress.style.width = `${Math.max(0, Math.min(100, progress))}%`;
     }
 
     function hideBusy() {
       el.busyOverlay.classList.add("hidden");
+      el.busyProgress.style.width = "0%";
     }
 
     function cleanProjectName() {
@@ -532,6 +567,7 @@
           smooth: Number(el.smoothInput.value),
           spacing: Number(el.spacingInput.value),
           arrangeSpacing: Number(el.arrangeSpacingInput.value),
+          arrangeTime: Number(el.arrangeTimeInput.value),
           finger: Number(el.fingerInput.value)
         },
         tools: state.tools.map(tool => ({
@@ -570,6 +606,7 @@
       el.smoothInput.value = settings.smooth ?? 3.5;
       el.spacingInput.value = settings.spacing ?? 2.5;
       el.arrangeSpacingInput.value = settings.arrangeSpacing ?? 10;
+      el.arrangeTimeInput.value = settings.arrangeTime ?? 8;
       el.fingerInput.value = settings.finger ?? 14;
       state.files = [];
       state.tools = project.tools.map(tool => ({
@@ -1599,6 +1636,8 @@
 
     const NEST_ROTATIONS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
     const NEST_MAX_POLYGON_POINTS = 96;
+    const NEST_MAX_CANDIDATES_PER_ROTATION = 450;
+    const NEST_MAX_COMPACT_ROUNDS = 36;
 
     function nestingPolygon(points) {
       if (points.length <= NEST_MAX_POLYGON_POINTS) return points;
@@ -1781,7 +1820,7 @@
       return uniquePositions(pts)
         .filter(p => p.x >= gap - 0.01 && p.y >= gap - 0.01)
         .sort((a, b) => a.y - b.y || a.x - b.x)
-        .slice(0, 900);
+        .slice(0, NEST_MAX_CANDIDATES_PER_ROTATION);
     }
 
     function layoutBounds(placed) {
@@ -1808,17 +1847,18 @@
       return !placed.some((p, index) => index !== ignoreIndex && bboxOverlap(expandBbox(test.bbox, gap), p.bbox) && polygonSetsTooClose(test.polygons, p.polygons, gap));
     }
 
-    function compactPlacements(placed, gap, dw, dh) {
+    function compactPlacements(placed, gap, dw, dh, shouldStop = () => false) {
       const steps = [Math.max(8, gap), Math.max(3, gap / 2), 1];
       steps.forEach(step => {
         let moved = true;
         let guard = 0;
-        while (moved && guard++ < 120) {
+        while (moved && guard++ < NEST_MAX_COMPACT_ROUNDS && !shouldStop()) {
           moved = false;
           placed.forEach((p, index) => {
+            if (shouldStop()) return;
             let current = p;
             let changed = true;
-            while (changed) {
+            while (changed && !shouldStop()) {
               changed = false;
               const left = movedPlacement(current, current.x - step, current.y);
               if (placementFits(left, placed, gap, dw, dh, index)) {
@@ -1844,12 +1884,17 @@
         showNotice("No layout items to arrange. Process or add tools first.");
         return;
       }
-      showBusy("Arranging contours...");
+      showBusy("Arranging contours...", "Preparing nesting search...");
+      el.autoArrange.disabled = true;
       await nextFrame();
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
       const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
+      const maxSeconds = Math.min(60, Math.max(1, Number(el.arrangeTimeInput.value) || 8));
+      const deadline = performance.now() + maxSeconds * 1000;
+      const shouldStop = () => performance.now() >= deadline;
       let overflow = 0;
+      let stoppedByTime = false;
       const entries = state.items
         .map((item, order) => {
           const fp0 = rotatedFootprint(item, 0);
@@ -1859,10 +1904,23 @@
           return { item, order, area, width: Math.max(fp0.width, fp90.width), height: Math.max(fp0.height, fp90.height), aspect };
         });
 
-      function arrangeOrder(arranged) {
+      async function arrangeOrder(arranged, orderIndex, totalOrders) {
         const placed = [];
         let failed = 0;
-        arranged.forEach(entry => {
+        for (let entryIndex = 0; entryIndex < arranged.length; entryIndex++) {
+          const entry = arranged[entryIndex];
+          const orderProgress = (orderIndex / totalOrders) * 100;
+          const itemProgress = (entryIndex / Math.max(1, arranged.length)) * (100 / totalOrders);
+          updateBusy(
+            "Arranging contours...",
+            `Pass ${orderIndex + 1}/${totalOrders}, item ${entryIndex + 1}/${arranged.length}. Stop limit ${maxSeconds}s.`,
+            orderProgress + itemProgress
+          );
+          await nextFrame();
+          if (shouldStop()) {
+            stoppedByTime = true;
+            return null;
+          }
           const item = entry.item;
           const rotationOptions = NEST_ROTATIONS.map(rot => ({
             rot,
@@ -1871,7 +1929,13 @@
           })).sort((a, b) => a.fp.height - b.fp.height || a.fp.width - b.fp.width);
           let best = null;
           for (const option of rotationOptions) {
-            for (const candidate of candidatePositions(placed, gap, option)) {
+            if (shouldStop()) break;
+            const candidates = candidatePositions(placed, gap, option);
+            for (const candidate of candidates) {
+              if (shouldStop()) {
+                stoppedByTime = true;
+                break;
+              }
               const bbox = {
                 x0: candidate.x,
                 y0: candidate.y,
@@ -1889,6 +1953,11 @@
             }
           }
 
+          if (shouldStop()) {
+            stoppedByTime = true;
+            return null;
+          }
+
           if (!best) {
             failed++;
             const option = rotationOptions.sort((a, b) => a.fp.width * a.fp.height - b.fp.width * b.fp.height)[0];
@@ -1903,8 +1972,14 @@
           }
 
           placed.push(best);
-        });
-        compactPlacements(placed, gap, dw, dh);
+        }
+        updateBusy("Compacting layout...", `Pass ${orderIndex + 1}/${totalOrders}. Sliding parts into open spaces.`, ((orderIndex + 0.85) / totalOrders) * 100);
+        await nextFrame();
+        compactPlacements(placed, gap, dw, dh, shouldStop);
+        if (placed.length < arranged.length) {
+          stoppedByTime = true;
+          return null;
+        }
         const used = layoutBounds(placed);
         const overflowArea = placed.reduce((sum, p) => sum + Math.max(0, p.bbox.x1 - (dw - gap)) * p.fp.height + Math.max(0, p.bbox.y1 - (dh - gap)) * p.fp.width, 0);
         const waste = (used.width * used.height) - placed.reduce((sum, p) => sum + p.entry.area, 0);
@@ -1923,9 +1998,28 @@
           [...entries].sort((a, b) => b.aspect - a.aspect || b.area - a.area),
           [...entries].sort((a, b) => a.order - b.order)
         ];
-        const result = orders.map(arrangeOrder).sort((a, b) => a.score - b.score)[0];
+        let result = null;
+        for (let orderIndex = 0; orderIndex < orders.length; orderIndex++) {
+          const order = orders[orderIndex];
+          if (shouldStop() && result) {
+            stoppedByTime = true;
+            break;
+          }
+          const attempt = await arrangeOrder(order, orderIndex, orders.length);
+          if (attempt && (!result || attempt.score < result.score)) result = attempt;
+          if (shouldStop()) {
+            stoppedByTime = true;
+            break;
+          }
+        }
+        if (!result) {
+          showNotice(`Arrange stopped after ${maxSeconds}s before a full layout was found. Try a higher max sec or fewer rotations/items.`);
+          return;
+        }
         overflow = result.overflow;
 
+        updateBusy("Applying layout...", "Best complete layout found. Updating drawer.", 100);
+        await nextFrame();
         result.placed.forEach(best => {
           placeItemByFootprint(best.item, best.x, best.y, best.rot, best.fp);
           invalidateContourCache(best.item);
@@ -1933,8 +2027,13 @@
 
         state.selectedId = state.items[0]?.id || null;
         renderAll();
-        showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite densely arranged ${state.items.length} item(s).`);
+        if (stoppedByTime) {
+          showNotice(`Deepnest-lite stopped at ${maxSeconds}s and applied the best complete layout found.`);
+        } else {
+          showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite densely arranged ${state.items.length} item(s).`);
+        }
       } finally {
+        el.autoArrange.disabled = false;
         hideBusy();
       }
     }
@@ -2225,7 +2324,7 @@
       drawLayout();
     });
 
-    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput].forEach(input => {
+    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput, el.arrangeTimeInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();
         scheduleAutosave();
