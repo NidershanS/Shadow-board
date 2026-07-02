@@ -1906,7 +1906,6 @@
 
       async function arrangeOrder(arranged, orderIndex, totalOrders) {
         const placed = [];
-        let failed = 0;
         for (let entryIndex = 0; entryIndex < arranged.length; entryIndex++) {
           const entry = arranged[entryIndex];
           const orderProgress = (orderIndex / totalOrders) * 100;
@@ -1959,16 +1958,7 @@
           }
 
           if (!best) {
-            failed++;
-            const option = rotationOptions.sort((a, b) => a.fp.width * a.fp.height - b.fp.width * b.fp.height)[0];
-            const y = placed.reduce((maxY, p) => Math.max(maxY, p.bbox.y1), gap) + gap;
-            best = movedPlacement({
-              entry,
-              item,
-              rot: option.rot,
-              fp: option.fp,
-              optionPolygons: option.polygons
-            }, gap, y);
+            return null;
           }
 
           placed.push(best);
@@ -1981,12 +1971,20 @@
           return null;
         }
         const used = layoutBounds(placed);
-        const overflowArea = placed.reduce((sum, p) => sum + Math.max(0, p.bbox.x1 - (dw - gap)) * p.fp.height + Math.max(0, p.bbox.y1 - (dh - gap)) * p.fp.width, 0);
+        const overflowArea = placed.reduce((sum, p) =>
+          sum +
+          Math.max(0, gap - p.bbox.x0) * p.fp.height +
+          Math.max(0, gap - p.bbox.y0) * p.fp.width +
+          Math.max(0, p.bbox.x1 - (dw - gap)) * p.fp.height +
+          Math.max(0, p.bbox.y1 - (dh - gap)) * p.fp.width,
+          0
+        );
+        if (overflowArea > 0) return null;
         const waste = (used.width * used.height) - placed.reduce((sum, p) => sum + p.entry.area, 0);
         return {
           placed,
-          overflow: failed + (overflowArea > 0 ? 1 : 0),
-          score: overflowArea * 1e10 + failed * 1e9 + used.height * 100000 + used.width * 800 + waste
+          overflow: 0,
+          score: used.height * 100000 + used.width * 800 + waste
         };
       }
 
@@ -2013,7 +2011,7 @@
           }
         }
         if (!result) {
-          showNotice(`Arrange stopped after ${maxSeconds}s before a full layout was found. Try a higher max sec or fewer rotations/items.`);
+          showNotice(`No full inside-drawer layout found in ${maxSeconds}s. Increase drawer size, reduce spacing, remove tools, or raise max sec.`);
           return;
         }
         overflow = result.overflow;
