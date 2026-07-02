@@ -86,7 +86,7 @@
     }
     .btns {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
       gap: 8px;
       margin-top: 8px;
     }
@@ -95,8 +95,15 @@
       border-radius: 6px;
       background: #fff;
       color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       min-height: 36px;
+      min-width: 0;
       padding: 8px 10px;
+      line-height: 1.18;
+      white-space: normal;
+      overflow-wrap: anywhere;
       cursor: pointer;
     }
     button.primary {
@@ -156,13 +163,16 @@
     .panel.hidden { display: none; }
     .toolbar {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 10px;
       align-items: end;
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 12px;
+    }
+    .toolbar > * {
+      min-width: 0;
     }
     .stage {
       min-height: 0;
@@ -246,6 +256,9 @@
       background: #fff;
       cursor: pointer;
     }
+    .item > div {
+      min-width: 0;
+    }
     .item.active {
       border-color: var(--accent);
       box-shadow: inset 0 0 0 1px var(--accent);
@@ -292,15 +305,16 @@
     }
     .itemActions {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
       gap: 6px;
       margin-top: 8px;
     }
     .itemActions.two {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
     }
     .itemActions button {
       min-height: 30px;
+      min-width: 0;
       padding: 5px 6px;
       font-size: 12px;
     }
@@ -485,7 +499,7 @@
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
-      .toolbar { grid-template-columns: 1fr 1fr; }
+      .toolbar { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
       .stage { grid-template-columns: 1fr; }
       canvas { min-height: 480px; }
     }
