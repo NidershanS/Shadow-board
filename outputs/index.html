@@ -458,13 +458,15 @@
             <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
           </div>
           <label>Pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
-          <button id="processBtn" class="primary">Process Images</button>
+          <button id="processBtn" class="primary">Detect Contours</button>
         </div>
         <div class="panel hidden" data-panel="review">
+          <div class="status">Review each red contour before adding tools to the drawer.</div>
           <div class="btns">
             <button id="acceptAllContours" class="secondary">Accept All</button>
             <button id="reviewNextContour">Review Next</button>
           </div>
+          <button id="addAcceptedToDrawer" class="primary">Add Accepted to Drawer</button>
           <h2>Detected Tools</h2>
           <div id="toolList"></div>
         </div>
@@ -492,7 +494,7 @@
         <label>Selected rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
         <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
         <label>Arrange max sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
-        <button id="autoArrange">Auto Arrange All</button>
+        <button id="autoArrange">Arrange Now</button>
         <button id="downloadLayout" class="primary">Export Drawer DXF</button>
         <button id="zoomOut">Zoom -</button>
         <button id="zoomIn">Zoom +</button>
@@ -562,6 +564,7 @@
     const PROJECT_STORAGE_KEY = "shadowBoardDxfMaker.project.v1";
     const state = {
       files: [],
+      pendingFiles: [],
       tools: [],
       items: [],
       selectedId: null,
@@ -586,6 +589,7 @@
       workflowSteps: document.querySelectorAll("[data-step]"),
       acceptAllContours: document.getElementById("acceptAllContours"),
       reviewNextContour: document.getElementById("reviewNextContour"),
+      addAcceptedToDrawer: document.getElementById("addAcceptedToDrawer"),
       canvas: document.getElementById("layoutCanvas"),
       drawerW: document.getElementById("drawerW"),
       drawerH: document.getElementById("drawerH"),
@@ -757,6 +761,7 @@
           width: tool.width,
           height: tool.height,
           accepted: !!tool.accepted,
+          fitStatus: tool.fitStatus || "",
           sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
           defaultPulls: clonePulls(tool.defaultPulls),
           preview: tool.preview,
@@ -792,6 +797,7 @@
       el.arrangeTimeInput.value = settings.arrangeTime ?? 8;
       el.fingerInput.value = settings.finger ?? 14;
       state.files = [];
+      state.pendingFiles = [];
       state.tools = project.tools.map(tool => ({
         id: String(tool.id),
         name: String(tool.name || "Tool"),
@@ -799,6 +805,7 @@
         width: Number(tool.width) || 0,
         height: Number(tool.height) || 0,
         accepted: !!tool.accepted,
+        fitStatus: tool.fitStatus || "",
         sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
         defaultPulls: clonePulls(tool.defaultPulls || []),
         preview: tool.preview || "",
@@ -816,6 +823,8 @@
       })).filter(item => toolIds.has(item.toolId));
       state.selectedId = state.items.some(item => item.id === project.selectedId) ? project.selectedId : (state.items[0]?.id || null);
       state.drag = null;
+      state.history = [];
+      state.future = [];
       invalidateContourCache();
       fitView();
       renderAll();
@@ -861,10 +870,14 @@
       localStorage.removeItem(PROJECT_STORAGE_KEY);
       clearTimeout(scheduleAutosave.timer);
       state.files = [];
+      state.pendingFiles = [];
       state.tools = [];
       state.items = [];
       state.selectedId = null;
       state.drag = null;
+      state.history = [];
+      state.future = [];
+      state.lastArrangeReport = null;
       el.fileInput.value = "";
       el.projectName.value = "shadow_board";
       fitView();
@@ -911,6 +924,7 @@
       const tool = getTool(toolId);
       if (!tool) return;
       tool.accepted = true;
+      tool.fitStatus = "";
       renderAll();
       updateWorkflow();
       showNotice(`${tool.name} contour accepted.`);
@@ -930,7 +944,7 @@
       await nextFrame();
       try {
         const fresh = await processFile(state.files[tool.sourceIndex], tool.sourceIndex);
-        Object.assign(tool, fresh, { id: tool.id, name: tool.name, accepted: false, sourceIndex: tool.sourceIndex });
+        Object.assign(tool, fresh, { id: tool.id, name: tool.name, accepted: false, fitStatus: "", sourceIndex: tool.sourceIndex });
         state.items.filter(i => i.toolId === tool.id).forEach(i => {
           i.pulls = clonePulls(tool.defaultPulls);
           invalidateContourCache(i);
@@ -1568,6 +1582,7 @@
         width: norm.width,
         height: norm.height,
         accepted: false,
+        fitStatus: "",
         sourceIndex: index,
         defaultPulls: defaultFingerPulls(norm.points, norm.width, norm.height, Number(el.fingerInput.value)),
         preview: previewCanvas(page, contour, 170, 220),
@@ -1651,20 +1666,52 @@
       return (pulls || []).map(p => ({ x: p.x, y: p.y, r: p.r, anchorX: p.anchorX, anchorY: p.anchorY }));
     }
 
-    function addToolToLayout(tool) {
-      pushHistory();
-      const item = {
+    function makeLayoutItem(tool, index = state.items.length) {
+      return {
         id: "item-" + Date.now() + "-" + Math.random().toString(16).slice(2),
         toolId: tool.id,
-        x: 20 + state.items.length * 12,
-        y: 20 + state.items.length * 12,
+        x: 20 + index * 12,
+        y: 20 + index * 12,
         rot: 0,
         locked: false,
         pulls: clonePulls(tool.defaultPulls)
       };
+    }
+
+    function addToolToLayout(tool) {
+      pushHistory();
+      const item = makeLayoutItem(tool);
       state.items.push(item);
       state.selectedId = item.id;
       renderAll();
+    }
+
+    function addAcceptedToolsToDrawer() {
+      const accepted = state.tools.filter(tool => tool.accepted);
+      if (!accepted.length) {
+        showNotice("Accept at least one contour before adding tools to the drawer.");
+        return;
+      }
+      const existing = new Set(state.items.map(item => item.toolId));
+      const missing = accepted.filter(tool => !existing.has(tool.id));
+      if (!missing.length) {
+        showNotice("All accepted contours are already in the drawer.");
+        showPanel("review");
+        setWorkflow("arrange");
+        return;
+      }
+      pushHistory();
+      missing.forEach(tool => {
+        tool.fitStatus = "";
+        const item = makeLayoutItem(tool);
+        state.items.push(item);
+        state.selectedId = item.id;
+        clampItemToDrawer(item);
+      });
+      state.lastArrangeReport = null;
+      renderAll();
+      setWorkflow("arrange");
+      showNotice(`${missing.length} accepted tool(s) added. Use Arrange Now when ready.`);
     }
 
     function getSelectedItem() {
@@ -1678,14 +1725,30 @@
     function renderToolList() {
       el.toolList.innerHTML = "";
       state.tools.forEach(tool => {
+        const inDrawer = state.items.some(item => item.toolId === tool.id);
+        const status = !tool.accepted
+          ? { cls: "warn", text: "Needs review" }
+          : inDrawer
+            ? { cls: "ok", text: "In drawer" }
+            : tool.fitStatus === "could-not-fit"
+              ? { cls: "warn", text: "Could not fit" }
+              : { cls: "ok", text: "Ready" };
         const d = document.createElement("div");
         d.className = "item" + (tool.accepted ? " accepted" : "");
-        const badge = tool.accepted ? `<span class="badge ok">Accepted</span>` : `<span class="badge warn">Needs review</span>`;
-        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm</span>${badge}<div class="itemActions"><button data-action="preview">Review</button><button data-action="add">Add</button><button class="danger" data-action="delete">Delete</button></div></div>`;
-        d.querySelector('[data-action="add"]').addEventListener("click", ev => {
+        const drawerButton = inDrawer ? "Remove" : "Add";
+        d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>${tool.width.toFixed(0)} x ${tool.height.toFixed(0)} mm</span><span class="badge ${status.cls}">${status.text}</span><div class="itemActions"><button data-action="preview">Review</button><button data-action="drawer">${drawerButton}</button><button class="danger" data-action="delete">Delete</button></div></div>`;
+        d.querySelector('[data-action="drawer"]').addEventListener("click", ev => {
           ev.stopPropagation();
-          addToolToLayout(tool);
-          showNotice(`${tool.name} added to drawer.`);
+          if (inDrawer) {
+            state.items.filter(item => item.toolId === tool.id).forEach(item => deleteLayoutItem(item.id));
+          } else if (!tool.accepted) {
+            showNotice("Review and accept this contour before adding it to the drawer.");
+            showPreview(tool);
+          } else {
+            addToolToLayout(tool);
+            tool.fitStatus = "";
+            showNotice(`${tool.name} added to drawer.`);
+          }
         });
         d.querySelector('[data-action="preview"]').addEventListener("click", ev => {
           ev.stopPropagation();
@@ -2140,7 +2203,7 @@
 
     async function autoArrangeAll() {
       if (!state.items.length) {
-        showNotice("No layout items to arrange. Process or add tools first.");
+        showNotice("No drawer tools to arrange. Accept contours, then add them to the drawer.");
         return;
       }
       showBusy("Arranging contours...", "Preparing nesting search...");
@@ -2286,6 +2349,47 @@
         return { placed, overflow: 0, score: scorePlacementSet(placed), source: "fast baseline" };
       }
 
+      function partialFastArrange(arranged) {
+        const placed = lockedPlacements.map(p => ({ ...p, polygons: p.polygons.map(poly => poly.map(pt => ({ ...pt }))) }));
+        const unplaced = [];
+        const bboxTooClose = (a, b) =>
+          a.x0 < b.x1 + gap - 0.01 &&
+          a.x1 > b.x0 - gap + 0.01 &&
+          a.y0 < b.y1 + gap - 0.01 &&
+          a.y1 > b.y0 - gap + 0.01;
+        for (const entry of arranged) {
+          const options = [0, 90, 180, 270].map(rot => ({
+            rot,
+            fp: rotatedFootprint(entry.item, rot),
+            polygons: rotatedCollisionPolygons(entry.item, rot)
+          }));
+          const xs = [gap];
+          const ys = [gap];
+          placed.forEach(p => {
+            xs.push(p.bbox.x0, p.bbox.x1 + gap);
+            ys.push(p.bbox.y0, p.bbox.y1 + gap);
+          });
+          const candidates = [];
+          ys.filter((y, i, arr) => arr.findIndex(v => Math.abs(v - y) < 0.01) === i).forEach(y => {
+            xs.filter((x, i, arr) => arr.findIndex(v => Math.abs(v - x) < 0.01) === i).forEach(x => candidates.push({ x, y }));
+          });
+          let best = null;
+          for (const option of options) {
+            for (const candidate of candidates) {
+              const test = makePlacement(entry, option, candidate.x, candidate.y);
+              if (test.bbox.x1 > dw - gap + 0.01 || test.bbox.y1 > dh - gap + 0.01) continue;
+              if (placed.some(p => bboxTooClose(test.bbox, p.bbox))) continue;
+              const score = scorePlacementSet([...placed, test]) + test.bbox.y0 * 30 + test.bbox.x0;
+              if (!best || score < best.score) best = { ...test, score };
+            }
+          }
+          if (best) placed.push(best);
+          else unplaced.push(entry);
+        }
+        compactPlacements(placed, gap, dw, dh, shouldStop);
+        return { placed, unplaced, overflow: unplaced.length, score: scorePlacementSet(placed) + unplaced.length * 1e9, source: "partial fit" };
+      }
+
       async function arrangeOrder(arranged, orderIndex, totalOrders) {
         const placed = lockedPlacements.map(p => ({ ...p, polygons: p.polygons.map(poly => poly.map(pt => ({ ...pt }))) }));
         for (let entryIndex = 0; entryIndex < arranged.length; entryIndex++) {
@@ -2387,7 +2491,7 @@
         updateBusy("Arranging contours...", "Creating fast inside-board baseline layout.", 4);
         await nextFrame();
         const baselineOrder = [...arrangeEntries].sort((a, b) => b.height - a.height || b.area - a.area);
-        let result = fastBboxArrange(baselineOrder) || safeShelfArrange(baselineOrder);
+        let result = fastBboxArrange(baselineOrder) || safeShelfArrange(baselineOrder) || partialFastArrange(baselineOrder);
         for (let orderIndex = 0; orderIndex < orders.length; orderIndex++) {
           const order = orders[orderIndex];
           if (shouldStop() && result) {
@@ -2401,22 +2505,43 @@
             break;
           }
         }
-        if (!result) {
-          showNotice(`No full inside-drawer layout found in ${maxSeconds}s. Increase drawer size, reduce spacing, remove tools, or raise max sec.`);
-          return;
+        if (!result || !result.placed.length) {
+          result = {
+            placed: lockedPlacements,
+            unplaced: arrangeEntries,
+            overflow: arrangeEntries.length,
+            score: arrangeEntries.length * 1e9,
+            source: "no fit"
+          };
         }
         overflow = result.overflow;
 
-        updateBusy("Applying layout...", "Best complete layout found. Updating drawer.", 100);
+        updateBusy("Applying layout...", "Updating drawer and library fit status.", 100);
         await nextFrame();
         result.placed.forEach(best => {
           placeItemByFootprint(best.item, best.x, best.y, best.rot, best.fp);
           invalidateContourCache(best.item);
         });
+        const placedIds = new Set(result.placed.map(p => p.item.id));
+        const unplacedEntries = result.unplaced || [];
+        unplacedEntries.forEach(entry => {
+          const tool = getTool(entry.item.toolId);
+          if (tool) tool.fitStatus = "could-not-fit";
+        });
+        result.placed.forEach(p => {
+          const tool = getTool(p.item.toolId);
+          if (tool) tool.fitStatus = "";
+        });
+        if (unplacedEntries.length) {
+          state.items = state.items.filter(item => item.locked || placedIds.has(item.id));
+        }
+        state.lastArrangeReport = validateLayout();
 
         state.selectedId = state.items[0]?.id || null;
         renderAll();
-        if (stoppedByTime) {
+        if (unplacedEntries.length) {
+          showNotice(`${result.placed.length} placed. ${unplacedEntries.length} tool(s) could not fit and stayed in the library.`);
+        } else if (stoppedByTime) {
           showNotice(`Deepnest-lite stopped at ${maxSeconds}s and applied the best complete ${result.source} layout found.`);
         } else {
           showNotice(overflow ? `Deepnest-lite arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Deepnest-lite densely arranged ${state.items.length} item(s).`);
@@ -2601,6 +2726,7 @@
       const cutPolys = state.items.map(item => ({ item, points: combinedLocalPoints(item).map(p => transformPoint(p, item)) }));
       const issues = [];
       let minGap = Infinity;
+      if (!state.items.length) issues.push("Add accepted contours to the drawer before export.");
       cutPolys.forEach(({ item, points }) => {
         const tool = getTool(item.toolId);
         const b = bboxPoints(points);
@@ -2622,7 +2748,8 @@
           if (minGap < spacing - 0.01) issues.push("Cut contours are closer than arrange spacing.");
         }
       }
-      if (acceptedCount() < state.tools.length) issues.push(`${state.tools.length - acceptedCount()} contour(s) still need review.`);
+      const drawerUnaccepted = state.items.filter(item => !getTool(item.toolId)?.accepted).length;
+      if (drawerUnaccepted) issues.push(`${drawerUnaccepted} drawer contour(s) still need review.`);
       const bounds = cutPolys.length ? bboxPoints(cutPolys.flatMap(c => c.points)) : { x0: 0, y0: 0, x1: 0, y1: 0 };
       const usedArea = Math.max(0, bounds.x1 - bounds.x0) * Math.max(0, bounds.y1 - bounds.y0);
       const drawerArea = Math.max(1, dw * dh);
@@ -2631,6 +2758,8 @@
         placed: state.items.length,
         accepted: acceptedCount(),
         totalTools: state.tools.length,
+        libraryReady: state.tools.filter(tool => tool.accepted && !state.items.some(item => item.toolId === tool.id)).length,
+        libraryUnfit: state.tools.filter(tool => tool.fitStatus === "could-not-fit" && !state.items.some(item => item.toolId === tool.id)).length,
         minGap: Number.isFinite(minGap) ? minGap : null,
         usedPercent: usedArea / drawerArea * 100,
         issues
@@ -2644,7 +2773,8 @@
       const issueText = report.issues.length ? report.issues.slice(0, 3).map(i => `<div>${escapeHtml(i)}</div>`).join("") : "<div>Ready for drawer DXF export.</div>";
       el.exportReport.innerHTML = `
         <strong>${report.ready ? "Export ready" : "Check before export"}</strong>
-        <div>${report.placed} layout item(s), ${report.accepted}/${report.totalTools} contour(s) accepted</div>
+        <div>${report.placed} layout item(s), ${report.accepted}/${report.totalTools} library contour(s) accepted</div>
+        <div>${report.libraryReady} ready in library, ${report.libraryUnfit} could not fit</div>
         <div>Minimum spacing: ${gapText}</div>
         <div>Used board area: ${report.usedPercent.toFixed(1)}%</div>
         ${issueText}
@@ -2665,8 +2795,8 @@
     }
 
     el.fileInput.addEventListener("change", () => {
-      state.files = Array.from(el.fileInput.files || []);
-      setStatus(`${state.files.length} image(s) ready.`);
+      state.pendingFiles = Array.from(el.fileInput.files || []);
+      setStatus(`${state.pendingFiles.length} new image(s) ready for contour detection.`);
       showPanel("setup");
       setWorkflow("upload");
     });
@@ -2679,7 +2809,7 @@
       state.tools.forEach(tool => { tool.accepted = true; });
       renderAll();
       showPanel("review");
-      showNotice(`${state.tools.length} contour(s) accepted.`);
+      showNotice(`${state.tools.length} contour(s) accepted. Add them to the drawer when ready.`);
     });
 
     el.reviewNextContour.addEventListener("click", () => {
@@ -2687,6 +2817,8 @@
       if (tool) showPreview(tool);
       else showNotice("No detected tools to review.");
     });
+
+    el.addAcceptedToDrawer.addEventListener("click", addAcceptedToolsToDrawer);
 
     el.saveProject.addEventListener("click", () => saveProject(false));
     el.loadProject.addEventListener("click", loadSavedProject);
@@ -2701,22 +2833,26 @@
     });
 
     el.processBtn.addEventListener("click", async () => {
-      if (!state.files.length) {
+      if (!state.pendingFiles.length) {
         setStatus("Choose one or more images first.");
         return;
       }
       el.processBtn.disabled = true;
       try {
-        for (let i = 0; i < state.files.length; i++) {
-          setStatus(`Processing ${i + 1} of ${state.files.length}: ${state.files[i].name}`);
-          const tool = await processFile(state.files[i], i);
+        state.lastArrangeReport = null;
+        const batch = state.pendingFiles.slice();
+        for (let i = 0; i < batch.length; i++) {
+          setStatus(`Processing ${i + 1} of ${batch.length}: ${batch[i].name}`);
+          state.files.push(batch[i]);
+          const sourceIndex = state.files.length - 1;
+          const tool = await processFile(batch[i], sourceIndex);
           state.tools.push(tool);
-          addToolToLayout(tool);
         }
-        await autoArrangeAll();
+        state.pendingFiles = [];
+        el.fileInput.value = "";
         showPanel("review");
         showPreview(nextUnacceptedTool());
-        setStatus("Done. Drag tools in the drawer and export DXF.");
+        setStatus(`${batch.length} contour(s) detected. Review and accept them before adding to the drawer.`);
       } catch (err) {
         console.error(err);
         setStatus("Could not process image: " + err.message);
