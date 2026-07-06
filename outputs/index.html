@@ -2283,6 +2283,12 @@
       return { x0: b.x0 - amount, y0: b.y0 - amount, x1: b.x1 + amount, y1: b.y1 + amount };
     }
 
+    function bboxDistance(a, b) {
+      const dx = Math.max(0, a.x0 - b.x1, b.x0 - a.x1);
+      const dy = Math.max(0, a.y0 - b.y1, b.y0 - a.y1);
+      return Math.hypot(dx, dy);
+    }
+
     function orientation(a, b, c) {
       const v = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
       return Math.abs(v) < 1e-7 ? 0 : (v > 0 ? 1 : 2);
@@ -3042,7 +3048,6 @@
       el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
       el.downloadLayout.disabled = !state.items.length;
       el.emptyState.classList.toggle("hidden", !!(state.tools.length || state.items.length));
-      renderExportReport();
       updateWorkflow();
       scheduleAutosave();
     }
@@ -3147,7 +3152,7 @@
       }
       const report = validateLayout();
       state.lastArrangeReport = report;
-      renderExportReport();
+      renderExportReport(report);
       if (!report.ready) {
         return { error: "Export blocked: fix the red/yellow checklist items before drawer DXF export.", report };
       }
@@ -3262,19 +3267,24 @@
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
       const spacing = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
-      const cutPolys = state.items.map(item => ({ item, points: combinedLocalPoints(item).map(p => transformPoint(p, item)) }));
+      const cutPolys = state.items.map(item => {
+        const points = combinedLocalPoints(item).map(p => transformPoint(p, item));
+        return { item, points, bbox: bboxPoints(points) };
+      });
       const issues = [];
       let minGap = Infinity;
       if (!state.items.length) issues.push("Add accepted contours to the drawer before export.");
-      cutPolys.forEach(({ item, points }) => {
+      cutPolys.forEach(({ item, bbox }) => {
         const tool = getTool(item.toolId);
-        const b = bboxPoints(points);
-        if (b.x0 < -0.01 || b.y0 < -0.01 || b.x1 > dw + 0.01 || b.y1 > dh + 0.01) {
+        if (bbox.x0 < -0.01 || bbox.y0 < -0.01 || bbox.x1 > dw + 0.01 || bbox.y1 > dh + 0.01) {
           issues.push(`${tool?.name || "Tool"} is outside the drawer.`);
         }
       });
       for (let i = 0; i < cutPolys.length; i++) {
         for (let j = i + 1; j < cutPolys.length; j++) {
+          // Bbox distance is a lower bound on contour distance, so pairs
+          // that cannot reduce the running minimum are skipped outright.
+          if (bboxDistance(cutPolys[i].bbox, cutPolys[j].bbox) >= minGap) continue;
           const a = cutPolys[i].points;
           const b = cutPolys[j].points;
           for (let ai = 0; ai < a.length - 1; ai++) {
@@ -3284,9 +3294,9 @@
             }
             if (minGap < spacing - 0.01) break;
           }
-          if (minGap < spacing - 0.01) issues.push("Cut contours are closer than arrange spacing.");
         }
       }
+      if (minGap < spacing - 0.01) issues.push("Cut contours are closer than arrange spacing.");
       const drawerUnaccepted = state.items.filter(item => !getTool(item.toolId)?.accepted).length;
       if (drawerUnaccepted) issues.push(`${drawerUnaccepted} drawer contour(s) still need review.`);
       const bounds = cutPolys.length ? bboxPoints(cutPolys.flatMap(c => c.points)) : { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -3305,9 +3315,8 @@
       };
     }
 
-    function renderExportReport() {
+    function renderExportReport(report = validateLayout()) {
       if (!el.exportReport) return;
-      const report = validateLayout();
       const spacing = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
       const gapText = report.minGap == null
         ? "n/a"
