@@ -3477,32 +3477,54 @@
       renderSelection();
     });
 
+    let drawQueued = false;
+    function scheduleDraw() {
+      if (drawQueued) return;
+      drawQueued = true;
+      requestAnimationFrame(() => {
+        drawQueued = false;
+        drawLayout();
+      });
+    }
+
+    const pendingMove = { pos: null, queued: false };
+    function applyDragMove(pos) {
+      const rect = el.canvas.getBoundingClientRect();
+      const world = toWorld(pos.x - rect.left, pos.y - rect.top);
+      const item = state.items.find(i => i.id === state.drag.id);
+      if (!item) return;
+      if (state.drag.mode === "pull") {
+        const local = localPointFromWorld(world, item);
+        const pulls = itemPulls(item);
+        snapPullToContour(pulls[state.drag.pullIndex], item, local);
+        invalidateContourCache(item);
+        clampItemToDrawer(item);
+      } else {
+        item.x = world.x - state.drag.dx;
+        item.y = world.y - state.drag.dy;
+        clampItemToDrawer(item);
+        updateDragOverlap(item);
+      }
+      drawLayout();
+    }
+
     window.addEventListener("pointermove", ev => {
       if (!state.drag) return;
       if (state.drag.mode === "pan") {
         state.viewX = state.drag.vx + (ev.clientX - state.drag.sx);
         state.viewY = state.drag.vy + (ev.clientY - state.drag.sy);
-        drawLayout();
+        scheduleDraw();
         return;
       }
-      const rect = el.canvas.getBoundingClientRect();
-      const world = toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
-      const item = state.items.find(i => i.id === state.drag.id);
-      if (item) {
-        if (state.drag.mode === "pull") {
-          const local = localPointFromWorld(world, item);
-          const pulls = itemPulls(item);
-          snapPullToContour(pulls[state.drag.pullIndex], item, local);
-          invalidateContourCache(item);
-          clampItemToDrawer(item);
-        } else {
-          item.x = world.x - state.drag.dx;
-          item.y = world.y - state.drag.dy;
-          clampItemToDrawer(item);
-          updateDragOverlap(item);
-        }
-        drawLayout();
-      }
+      // Coalesce drag work to one update per frame; high-rate mice fire
+      // pointermove far more often than the display refreshes.
+      pendingMove.pos = { x: ev.clientX, y: ev.clientY };
+      if (pendingMove.queued) return;
+      pendingMove.queued = true;
+      requestAnimationFrame(() => {
+        pendingMove.queued = false;
+        if (pendingMove.pos && state.drag) applyDragMove(pendingMove.pos);
+      });
     });
 
     el.canvas.addEventListener("wheel", ev => {
@@ -3515,12 +3537,16 @@
       state.scale = Math.max(0.05, Math.min(40, state.scale * factor));
       state.viewX = mx - world.x * state.scale;
       state.viewY = my - world.y * state.scale;
-      drawLayout();
+      scheduleDraw();
     }, { passive: false });
 
     window.addEventListener("pointerup", () => {
       if (!state.drag) return;
+      const mode = state.drag.mode;
+      if (mode !== "pan" && pendingMove.pos) applyDragMove(pendingMove.pos);
+      pendingMove.pos = null;
       state.drag = null;
+      if (mode === "pan") return;
       renderAll();
     });
     window.addEventListener("resize", drawLayout);
