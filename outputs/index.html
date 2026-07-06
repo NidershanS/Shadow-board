@@ -3034,47 +3034,68 @@
       const dpr = window.devicePixelRatio || 1;
       const dw = Number(el.drawerW.value), dh = Number(el.drawerH.value);
       drawBackground(dpr, dw, dh);
+      // Everything below draws in item-local mm coordinates under a composed
+      // view + item transform, so line widths are divided by state.scale to
+      // stay constant in screen pixels.
       for (const item of state.items) {
         const tool = getTool(item.toolId);
         if (!tool) continue;
-        ctx.beginPath();
-        tool.points.forEach((p, i) => {
-          const s = toScreen(transformPoint(p, item));
-          if (i === 0) ctx.moveTo(s.x, s.y);
-          else ctx.lineTo(s.x, s.y);
-        });
-        ctx.closePath();
+        const selected = item.id === state.selectedId;
+        const cx = tool.width / 2, cy = tool.height / 2;
+        ctx.save();
+        ctx.translate(state.viewX, state.viewY);
+        ctx.scale(state.scale, state.scale);
+        ctx.translate(item.x + cx, item.y + cy);
+        ctx.rotate(item.rot * Math.PI / 180);
+        ctx.translate(-cx, -cy);
         if (item._overlapping) {
           ctx.fillStyle = "rgba(208, 22, 28, 0.28)";
           ctx.strokeStyle = "#d0161c";
-          ctx.lineWidth = 2.4;
+          ctx.lineWidth = 2.4 / state.scale;
         } else {
-          ctx.fillStyle = item.id === state.selectedId ? "rgba(200,24,24,0.10)" : "rgba(28,37,44,0.06)";
-          ctx.strokeStyle = item.id === state.selectedId ? "#c81818" : "#222";
-          ctx.lineWidth = item.id === state.selectedId ? 2 : 1.4;
+          ctx.fillStyle = selected ? "rgba(200,24,24,0.10)" : "rgba(28,37,44,0.06)";
+          ctx.strokeStyle = selected ? "#c81818" : "#222";
+          ctx.lineWidth = (selected ? 2 : 1.4) / state.scale;
         }
-        ctx.fill();
-        ctx.stroke();
+        const path = toolPath(tool);
+        ctx.fill(path);
+        ctx.stroke(path);
         const pulls = itemPulls(item);
-        for (let pullIndex = 0; pullIndex < pulls.length; pullIndex++) {
-          const pull = pulls[pullIndex];
-          const c = toScreen(transformPoint(pull, item));
-          const r = Math.max(2, pull.r * state.scale);
+        ctx.fillStyle = selected ? "rgba(21, 96, 189, 0.10)" : "rgba(200, 24, 24, 0.04)";
+        ctx.strokeStyle = selected ? "#1560bd" : "#c81818";
+        ctx.lineWidth = (selected ? 2 : 1.2) / state.scale;
+        for (const pull of pulls) {
           ctx.beginPath();
-          ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = item.id === state.selectedId ? "rgba(21, 96, 189, 0.10)" : "rgba(200, 24, 24, 0.04)";
-          ctx.strokeStyle = item.id === state.selectedId ? "#1560bd" : "#c81818";
-          ctx.lineWidth = item.id === state.selectedId ? 2 : 1.2;
+          ctx.arc(pull.x, pull.y, Math.max(2 / state.scale, pull.r), 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
-          if (item.id === state.selectedId) {
+        }
+        if (selected) {
+          ctx.fillStyle = "#1560bd";
+          for (const pull of pulls) {
             ctx.beginPath();
-            ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
-            ctx.fillStyle = "#1560bd";
+            ctx.arc(pull.x, pull.y, 5 / state.scale, 0, Math.PI * 2);
             ctx.fill();
           }
         }
+        ctx.restore();
       }
+    }
+
+    // Tool outlines are static in local coordinates; build the Path2D once
+    // per tool and rebuild only when the points array is replaced (reprocess).
+    function toolPath(tool) {
+      if (!tool._path2d || tool._path2dPoints !== tool.points) {
+        const path = new Path2D();
+        tool.points.forEach((p, i) => {
+          if (i === 0) path.moveTo(p.x, p.y);
+          else path.lineTo(p.x, p.y);
+        });
+        path.closePath();
+        tool._path2d = path;
+        tool._path2dPoints = tool.points;
+      }
+      return tool._path2d;
     }
 
     function renderAll() {
