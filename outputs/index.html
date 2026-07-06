@@ -2088,8 +2088,21 @@
       showNotice(`${tool ? tool.name : "Layout item"} removed from drawer.`);
     }
 
+    // getBoundingClientRect forces a layout flush, so the rect is cached and
+    // invalidated on resize/scroll instead of being re-read every frame.
+    let canvasRectCache = null;
+    function canvasRect() {
+      if (!canvasRectCache) canvasRectCache = el.canvas.getBoundingClientRect();
+      return canvasRectCache;
+    }
+    new ResizeObserver(() => {
+      canvasRectCache = null;
+      scheduleDraw();
+    }).observe(el.canvas);
+    window.addEventListener("scroll", () => { canvasRectCache = null; }, true);
+
     function resizeCanvas() {
-      const rect = el.canvas.getBoundingClientRect();
+      const rect = canvasRect();
       const dpr = window.devicePixelRatio || 1;
       const w = Math.max(500, Math.round(rect.width * dpr));
       const h = Math.max(420, Math.round(rect.height * dpr));
@@ -2102,7 +2115,7 @@
 
     function fitView() {
       resizeCanvas();
-      const rect = el.canvas.getBoundingClientRect();
+      const rect = canvasRect();
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
       state.scale = Math.min((rect.width - 44) / dw, (rect.height - 44) / dh);
@@ -2113,7 +2126,7 @@
 
     function zoomView(factor) {
       resizeCanvas();
-      const rect = el.canvas.getBoundingClientRect();
+      const rect = canvasRect();
       const center = { x: rect.width / 2, y: rect.height / 2 };
       const world = toWorld(center.x, center.y);
       state.scale = Math.max(0.05, Math.min(40, state.scale * factor));
@@ -2972,30 +2985,55 @@
       }
     }
 
+    // The foam fill, drawer rect, and grid only change with view or drawer
+    // size, so they are cached on an offscreen canvas and blitted per frame.
+    // During item and pull drags the key is stable, so per-frame background
+    // work drops to a single drawImage.
+    const bgCache = { canvas: document.createElement("canvas"), key: "" };
+    function drawBackground(dpr, dw, dh) {
+      const key = [el.canvas.width, el.canvas.height, dpr, dw, dh, state.scale, state.viewX, state.viewY].join("|");
+      if (bgCache.key !== key) {
+        bgCache.key = key;
+        const c = bgCache.canvas;
+        if (c.width !== el.canvas.width || c.height !== el.canvas.height) {
+          c.width = el.canvas.width;
+          c.height = el.canvas.height;
+        }
+        const g = c.getContext("2d");
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.fillStyle = "#eef3f5";
+        g.fillRect(0, 0, c.width, c.height);
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const topLeft = toScreen({ x: 0, y: 0 });
+        g.fillStyle = "#ffffff";
+        g.strokeStyle = "#1c252c";
+        g.lineWidth = 1.5;
+        g.fillRect(topLeft.x, topLeft.y, dw * state.scale, dh * state.scale);
+        g.strokeRect(topLeft.x, topLeft.y, dw * state.scale, dh * state.scale);
+        g.strokeStyle = "#d6dde2";
+        g.lineWidth = 1;
+        const grid = 50;
+        g.beginPath();
+        for (let x = grid; x < dw; x += grid) {
+          const a = toScreen({ x, y: 0 }), b = toScreen({ x, y: dh });
+          g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+        }
+        for (let y = grid; y < dh; y += grid) {
+          const a = toScreen({ x: 0, y }), b = toScreen({ x: dw, y });
+          g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+        }
+        g.stroke();
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(bgCache.canvas, 0, 0);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
     function drawLayout() {
       resizeCanvas();
-      const rect = el.canvas.getBoundingClientRect();
-      ctx.clearRect(0, 0, rect.width, rect.height);
+      const dpr = window.devicePixelRatio || 1;
       const dw = Number(el.drawerW.value), dh = Number(el.drawerH.value);
-      const topLeft = toScreen({ x: 0, y: 0 });
-      ctx.fillStyle = "#eef3f5";
-      ctx.fillRect(0, 0, rect.width, rect.height);
-      ctx.fillStyle = "#ffffff";
-      ctx.strokeStyle = "#1c252c";
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(topLeft.x, topLeft.y, dw * state.scale, dh * state.scale);
-      ctx.strokeRect(topLeft.x, topLeft.y, dw * state.scale, dh * state.scale);
-      ctx.strokeStyle = "#d6dde2";
-      ctx.lineWidth = 1;
-      const grid = 50;
-      for (let x = grid; x < dw; x += grid) {
-        const a = toScreen({ x, y: 0 }), b = toScreen({ x, y: dh });
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
-      for (let y = grid; y < dh; y += grid) {
-        const a = toScreen({ x: 0, y }), b = toScreen({ x: dw, y });
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
+      drawBackground(dpr, dw, dh);
       for (const item of state.items) {
         const tool = getTool(item.toolId);
         if (!tool) continue;
@@ -3474,7 +3512,7 @@
     el.processBtn.addEventListener("click", detectPending);
 
     el.canvas.addEventListener("pointerdown", ev => {
-      const rect = el.canvas.getBoundingClientRect();
+      const rect = canvasRect();
       const world = toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
       const pullHit = hitTestPull(world);
       if (pullHit) {
@@ -3510,7 +3548,7 @@
 
     const pendingMove = { pos: null, queued: false };
     function applyDragMove(pos) {
-      const rect = el.canvas.getBoundingClientRect();
+      const rect = canvasRect();
       const world = toWorld(pos.x - rect.left, pos.y - rect.top);
       const item = state.items.find(i => i.id === state.drag.id);
       if (!item) return;
@@ -3550,7 +3588,7 @@
 
     el.canvas.addEventListener("wheel", ev => {
       ev.preventDefault();
-      const rect = el.canvas.getBoundingClientRect();
+      const rect = canvasRect();
       const mx = ev.clientX - rect.left;
       const my = ev.clientY - rect.top;
       const world = toWorld(mx, my);
@@ -3570,7 +3608,10 @@
       if (mode === "pan") return;
       renderAll();
     });
-    window.addEventListener("resize", drawLayout);
+    window.addEventListener("resize", () => {
+      canvasRectCache = null;
+      scheduleDraw();
+    });
     el.drawerW.addEventListener("input", fitView);
     el.drawerH.addEventListener("input", fitView);
     el.fitView.addEventListener("click", fitView);
