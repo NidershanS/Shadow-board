@@ -2130,8 +2130,7 @@
       return { x: (x - state.viewX) / state.scale, y: (y - state.viewY) / state.scale };
     }
 
-    function transformPoint(p, item) {
-      const tool = getTool(item.toolId);
+    function transformPoint(p, item, tool = getTool(item.toolId)) {
       const cx = tool.width / 2, cy = tool.height / 2;
       const rad = item.rot * Math.PI / 180;
       const dx = p.x - cx, dy = p.y - cy;
@@ -2177,7 +2176,8 @@
     }
 
     function transformedItemBounds(item) {
-      return bboxPoints(itemLayoutPoints(item).map(p => transformPoint(p, item)));
+      const tool = getTool(item.toolId);
+      return bboxPoints(itemLayoutPoints(item).map(p => transformPoint(p, item, tool)));
     }
 
     function clampItemToDrawer(item) {
@@ -2341,6 +2341,7 @@
 
     function polygonsTooClose(a, b, spacingMm) {
       if (polygonsOverlap(a, b)) return true;
+      if (spacingMm <= 0) return false;
       for (let i = 0; i < a.length - 1; i++) {
         for (let j = 0; j < b.length - 1; j++) {
           if (segmentDistance(a[i], a[i + 1], b[j], b[j + 1]) < spacingMm) return true;
@@ -3041,7 +3042,7 @@
     function renderAll() {
       renderToolList();
       renderLayoutItems();
-      state.items.forEach(item => updateDragOverlap(item));
+      updateAllOverlaps();
       drawLayout();
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
@@ -3066,9 +3067,9 @@
 
     function itemWorldPolygons(item) {
       const tool = getTool(item.toolId);
-      const polys = [nestingPolygon(tool.points).map(p => transformPoint(p, item))];
+      const polys = [nestingPolygon(tool.points).map(p => transformPoint(p, item, tool))];
       itemPulls(item).forEach(pull => {
-        polys.push(circlePolygon(transformPoint(pull, item), pull.r, 16));
+        polys.push(circlePolygon(transformPoint(pull, item, tool), pull.r, 16));
       });
       return polys;
     }
@@ -3084,10 +3085,29 @@
       });
     }
 
+    // Full-layout overlap refresh: builds each item's world polygons once and
+    // checks every pair a single time, instead of n calls x n rebuilds.
+    function updateAllOverlaps() {
+      const entries = state.items.map(item => {
+        const polys = itemWorldPolygons(item);
+        return { item, polys, bbox: bboxPoints(polys.flat()) };
+      });
+      entries.forEach(e => { e.item._overlapping = false; });
+      for (let i = 0; i < entries.length; i++) {
+        for (let j = i + 1; j < entries.length; j++) {
+          if (!bboxOverlap(entries[i].bbox, entries[j].bbox)) continue;
+          if (polygonSetsTooClose(entries[i].polys, entries[j].polys, 0)) {
+            entries[i].item._overlapping = true;
+            entries[j].item._overlapping = true;
+          }
+        }
+      }
+    }
+
     function hitTest(world) {
       for (let i = state.items.length - 1; i >= 0; i--) {
         const item = state.items[i], tool = getTool(item.toolId);
-        const pts = tool.points.map(p => transformPoint(p, item));
+        const pts = tool.points.map(p => transformPoint(p, item, tool));
         if (pointInPolygon(world, pts)) return item;
       }
       return null;
@@ -3174,7 +3194,7 @@
         const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0, 40);
         ents.push({
           layer,
-          points: combinedLocalPoints(item).map(p => transformPoint(p, item))
+          points: combinedLocalPoints(item).map(p => transformPoint(p, item, tool))
         });
       });
       const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
@@ -3280,7 +3300,8 @@
       const dh = Number(el.drawerH.value);
       const spacing = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
       const cutPolys = state.items.map(item => {
-        const points = combinedLocalPoints(item).map(p => transformPoint(p, item));
+        const tool = getTool(item.toolId);
+        const points = combinedLocalPoints(item).map(p => transformPoint(p, item, tool));
         return { item, points, bbox: bboxPoints(points) };
       });
       const issues = [];
