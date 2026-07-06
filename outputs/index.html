@@ -887,8 +887,8 @@
       renderAll();
     }
 
-    function pushHistory() {
-      state.history.push(snapshotLayout());
+    function pushHistory(snapshot = snapshotLayout()) {
+      state.history.push(snapshot);
       if (state.history.length > 50) state.history.shift();
       state.future = [];
     }
@@ -1199,9 +1199,10 @@
     function loadImage(file) {
       return new Promise((resolve, reject) => {
         const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.src = URL.createObjectURL(file);
+        const url = URL.createObjectURL(file);
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = err => { URL.revokeObjectURL(url); reject(err); };
+        img.src = url;
       });
     }
 
@@ -1310,49 +1311,6 @@
         out.height
       );
       return out;
-    }
-
-    function dilate(mask, w, h, radius) {
-      let cur = mask;
-      for (let r = 0; r < radius; r++) {
-        const out = new Uint8Array(w * h);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            let on = 0;
-            for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1) && !on; yy++) {
-              for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) {
-                if (cur[yy * w + xx]) { on = 1; break; }
-              }
-            }
-            out[y * w + x] = on;
-          }
-        }
-        cur = out;
-      }
-      return cur;
-    }
-
-    function erode(mask, w, h, radius) {
-      let cur = mask;
-      for (let r = 0; r < radius; r++) {
-        const out = new Uint8Array(w * h);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            let on = 1;
-            for (let yy = y - 1; yy <= y + 1 && on; yy++) {
-              for (let xx = x - 1; xx <= x + 1; xx++) {
-                if (xx < 0 || yy < 0 || xx >= w || yy >= h || !cur[yy * w + xx]) {
-                  on = 0;
-                  break;
-                }
-              }
-            }
-            out[y * w + x] = on;
-          }
-        }
-        cur = out;
-      }
-      return cur;
     }
 
     function fillInteriorHoles(mask, w, h) {
@@ -1498,8 +1456,8 @@
           if (x < border || y < border || x >= w - border || y >= h - border) mask[y * w + x] = 0;
         }
       }
-      let clean = dilate(mask, w, h, 5);
-      clean = erode(clean, w, h, 3);
+      let clean = boxDilate(mask, w, h, 5);
+      clean = boxErode(clean, w, h, 3);
       clean = largestComponent(clean, w, h, Math.round(120 * PROC_PX_PER_MM * PROC_PX_PER_MM));
       const metalBridge = Math.round(Math.max(0, metalRepairMm) * PROC_PX_PER_MM);
       if (metalBridge > 0) {
@@ -1507,9 +1465,9 @@
         clean = fillInteriorHoles(clean, w, h);
         clean = boxErode(clean, w, h, metalBridge);
       }
-      clean = dilate(clean, w, h, 2);
+      clean = boxDilate(clean, w, h, 2);
       clean = fillInteriorHoles(clean, w, h);
-      clean = erode(clean, w, h, 2);
+      clean = boxErode(clean, w, h, 2);
       return { mask: clean, w, h };
     }
 
@@ -1818,7 +1776,7 @@
       const page = detectA4Crop(img);
       const { mask, w, h } = makeToolMask(page, Number(el.metalRepairInput.value));
       const offsetPx = Math.round(Number(el.offsetInput.value) * PROC_PX_PER_MM);
-      let cut = dilate(mask, w, h, offsetPx);
+      let cut = boxDilate(mask, w, h, offsetPx);
       let contour = traceMask(cut, w, h);
       contour = smoothContour(contour, Number(el.spacingInput.value), Number(el.smoothInput.value));
       const norm = normalizeMm(contour);
@@ -3538,8 +3496,8 @@
       const pullHit = hitTestPull(world);
       if (pullHit) {
         state.selectedId = pullHit.item.id;
-        pushHistory();
-        state.drag = { mode: "pull", id: pullHit.item.id, pullIndex: pullHit.pullIndex };
+        state.drag = { mode: "pull", id: pullHit.item.id, pullIndex: pullHit.pullIndex, snapshot: snapshotLayout() };
+        state.drag.before = dragStateKey(pullHit.item, state.drag);
         renderSelection();
         return;
       }
@@ -3547,8 +3505,8 @@
       if (hit) {
         state.selectedId = hit.id;
         if (!hit.locked) {
-          pushHistory();
-          state.drag = { mode: "item", id: hit.id, dx: world.x - hit.x, dy: world.y - hit.y };
+          state.drag = { mode: "item", id: hit.id, dx: world.x - hit.x, dy: world.y - hit.y, snapshot: snapshotLayout() };
+          state.drag.before = dragStateKey(hit, state.drag);
         }
       } else {
         state.selectedId = null;
@@ -3620,13 +3578,26 @@
       scheduleDraw();
     }, { passive: false });
 
+    // A drag's undo snapshot is taken at pointerdown but only committed to
+    // history on pointerup if the item or pull actually moved, so plain
+    // selection clicks do not pollute the undo stack.
+    function dragStateKey(item, drag) {
+      if (drag.mode === "pull") {
+        const p = itemPulls(item)[drag.pullIndex];
+        return p ? `${p.x},${p.y}` : "";
+      }
+      return `${item.x},${item.y}`;
+    }
+
     window.addEventListener("pointerup", () => {
       if (!state.drag) return;
-      const mode = state.drag.mode;
-      if (mode !== "pan" && pendingMove.pos) applyDragMove(pendingMove.pos);
+      const drag = state.drag;
+      if (drag.mode !== "pan" && pendingMove.pos) applyDragMove(pendingMove.pos);
       pendingMove.pos = null;
       state.drag = null;
-      if (mode === "pan") return;
+      if (drag.mode === "pan") return;
+      const item = state.items.find(i => i.id === drag.id);
+      if (item && drag.snapshot && dragStateKey(item, drag) !== drag.before) pushHistory(drag.snapshot);
       renderAll();
     });
     window.addEventListener("resize", () => {
@@ -3648,7 +3619,7 @@
         return;
       }
       pushHistory();
-      const copy = { ...item, id: "item-" + Date.now(), x: item.x + 15, y: item.y + 15, pulls: clonePulls(itemPulls(item)) };
+      const copy = { ...item, id: "item-" + Date.now() + "-" + Math.random().toString(16).slice(2), x: item.x + 15, y: item.y + 15, pulls: clonePulls(itemPulls(item)) };
       copy.locked = false;
       clampItemToDrawer(copy);
       state.items.push(copy);
