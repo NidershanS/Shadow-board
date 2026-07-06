@@ -2047,12 +2047,12 @@
         if (!tool) return;
         const d = document.createElement("div");
         d.className = "item" + (item.id === state.selectedId ? " active" : "");
+        d.dataset.itemId = item.id;
         const locked = item.locked ? `<span class="badge warn">Locked</span>` : "";
         d.innerHTML = `<img class="thumb" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><span>X ${item.x.toFixed(0)} / Y ${item.y.toFixed(0)} / R ${item.rot.toFixed(0)}</span>${locked}<div class="itemActions two"><button data-action="preview">Preview</button><button class="danger" data-action="delete">Delete</button></div></div>`;
         d.addEventListener("click", () => {
           state.selectedId = item.id;
-          el.rotInput.value = item.rot.toFixed(0);
-          renderAll();
+          renderSelection();
         });
         d.querySelector('[data-action="preview"]').addEventListener("click", ev => {
           ev.stopPropagation();
@@ -3052,6 +3052,18 @@
       scheduleAutosave();
     }
 
+    // Selection-only refresh: toggles list highlights and redraws the canvas
+    // without rebuilding the sidebar DOM (no thumbnail re-decode, no scroll reset).
+    function renderSelection() {
+      el.layoutItems.querySelectorAll(".item").forEach(d => {
+        d.classList.toggle("active", d.dataset.itemId === state.selectedId);
+      });
+      const sel = getSelectedItem();
+      el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
+      el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
+      drawLayout();
+    }
+
     function itemWorldPolygons(item) {
       const tool = getTool(item.toolId);
       const polys = [nestingPolygon(tool.points).map(p => transformPoint(p, item))];
@@ -3448,7 +3460,7 @@
         state.selectedId = pullHit.item.id;
         pushHistory();
         state.drag = { mode: "pull", id: pullHit.item.id, pullIndex: pullHit.pullIndex };
-        renderAll();
+        renderSelection();
         return;
       }
       const hit = hitTest(world);
@@ -3462,7 +3474,7 @@
         state.selectedId = null;
         state.drag = { mode: "pan", sx: ev.clientX, sy: ev.clientY, vx: state.viewX, vy: state.viewY };
       }
-      renderAll();
+      renderSelection();
     });
 
     window.addEventListener("pointermove", ev => {
