@@ -631,9 +631,9 @@
               <label>Board thickness mm<input id="stlThicknessInput" type="number" value="18" min="3" step="0.5"></label>
               <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
             </div>
-            <label>STL mesh resolution mm<input id="stlResolutionInput" type="number" value="3" min="1.5" step="0.5"></label>
+            <label>STL contour detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="1.5" step="0.25"></label>
             <button id="downloadStl" class="secondary">Export 3D STL</button>
-            <div class="status">Experimental: creates a hollow-bottom printable board with tool openings and 2 mm walls/skin.</div>
+            <div class="status">Experimental: creates a hollow-bottom printable board with refined tool openings and 2 mm walls/skin.</div>
           </div>
           <h2>Layout Items</h2>
           <div id="layoutItems" class="selectedTools"></div>
@@ -946,7 +946,7 @@
       el.fingerInput.value = settings.finger ?? 14;
       el.stlThicknessInput.value = settings.stlThickness ?? 18;
       el.stlWallInput.value = settings.stlWall ?? 2;
-      el.stlResolutionInput.value = settings.stlResolution ?? 3;
+      el.stlResolutionInput.value = Math.min(1.5, Math.max(0.75, Number(settings.stlResolution ?? 1.5)));
       state.files = [];
       state.pendingFiles = [];
       state.tools = project.tools.map(tool => ({
@@ -2848,25 +2848,37 @@
       return lines.join("\n");
     }
 
-    function stlPoint(p) {
-      return `      vertex ${p.x.toFixed(3)} ${p.y.toFixed(3)} ${p.z.toFixed(3)}`;
+    function addStlTriangle(triangles, a, b, c) {
+      triangles.push([a, b, c]);
     }
 
-    function addStlTriangle(lines, a, b, c) {
-      lines.push(
-        "  facet normal 0 0 0",
-        "    outer loop",
-        stlPoint(a),
-        stlPoint(b),
-        stlPoint(c),
-        "    endloop",
-        "  endfacet"
-      );
+    function addStlQuad(triangles, a, b, c, d) {
+      addStlTriangle(triangles, a, b, c);
+      addStlTriangle(triangles, a, c, d);
     }
 
-    function addStlQuad(lines, a, b, c, d) {
-      addStlTriangle(lines, a, b, c);
-      addStlTriangle(lines, a, c, d);
+    function makeBinaryStl(triangles, name) {
+      const buffer = new ArrayBuffer(84 + triangles.length * 50);
+      const view = new DataView(buffer);
+      const header = `Shadow Board hollow shell ${name}`.slice(0, 80);
+      for (let i = 0; i < header.length; i++) view.setUint8(i, header.charCodeAt(i));
+      view.setUint32(80, triangles.length, true);
+      let offset = 84;
+      triangles.forEach(tri => {
+        for (let i = 0; i < 3; i++) {
+          view.setFloat32(offset, 0, true);
+          offset += 4;
+        }
+        tri.forEach(p => {
+          view.setFloat32(offset, p.x, true);
+          view.setFloat32(offset + 4, p.y, true);
+          view.setFloat32(offset + 8, p.z, true);
+          offset += 12;
+        });
+        view.setUint16(offset, 0, true);
+        offset += 2;
+      });
+      return buffer;
     }
 
     function normalizeClosedPolygon(points) {
@@ -2886,29 +2898,29 @@
       return best;
     }
 
-    function addGridEdgeFace(lines, x0, y0, x1, y1, edge, z0, z1) {
+    function addGridEdgeFace(triangles, x0, y0, x1, y1, edge, z0, z1) {
       if (Math.abs(z1 - z0) < 0.001) return;
       if (edge === "left") {
-        addStlQuad(lines, { x: x0, y: y0, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y1, z: z1 }, { x: x0, y: y0, z: z1 });
+        addStlQuad(triangles, { x: x0, y: y0, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y1, z: z1 }, { x: x0, y: y0, z: z1 });
       } else if (edge === "right") {
-        addStlQuad(lines, { x: x1, y: y1, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x1, y: y1, z: z1 });
+        addStlQuad(triangles, { x: x1, y: y1, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x1, y: y1, z: z1 });
       } else if (edge === "top") {
-        addStlQuad(lines, { x: x0, y: y0, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x0, y: y0, z: z1 });
+        addStlQuad(triangles, { x: x0, y: y0, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x0, y: y0, z: z1 });
       } else {
-        addStlQuad(lines, { x: x1, y: y1, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y1, z: z1 }, { x: x1, y: y1, z: z1 });
+        addStlQuad(triangles, { x: x1, y: y1, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y1, z: z1 }, { x: x1, y: y1, z: z1 });
       }
     }
 
     function makePrintableShellStl(cutEntities, drawer, settings) {
       const thickness = Math.max(3, Number(settings.thickness) || 18);
       const wall = Math.max(0.8, Number(settings.wall) || 2);
-      const pitch = Math.max(1.5, Number(settings.pitch) || 3);
+      const pitch = Math.min(1.5, Math.max(0.75, Number(settings.pitch) || 1.5));
       if (wall >= thickness) throw new Error("Wall / skin thickness must be smaller than board thickness.");
       const cols = Math.ceil(drawer.w / pitch);
       const rows = Math.ceil(drawer.h / pitch);
       const cellCount = cols * rows;
-      if (cellCount > 180000) {
-        throw new Error(`STL mesh would use ${cellCount.toLocaleString()} cells. Increase STL mesh resolution mm.`);
+      if (cellCount > 400000) {
+        throw new Error(`STL mesh would use ${cellCount.toLocaleString()} cells. Increase STL contour detail mm.`);
       }
       const cuts = cutEntities.map(ent => normalizeClosedPolygon(ent.points)).filter(poly => poly.length > 3);
       const solid = new Uint8Array(cellCount);
@@ -2936,7 +2948,7 @@
       }
 
       const name = safeFileBase(cleanProjectName()) || "shadow_board";
-      const lines = [`solid ${name}_hollow_shell`];
+      const triangles = [];
       const dirs = [
         { dc: -1, dr: 0, edge: "left" },
         { dc: 1, dr: 0, edge: "right" },
@@ -2953,28 +2965,27 @@
           const x1 = Math.min((c + 1) * pitch, drawer.w);
           const y1 = Math.min((r + 1) * pitch, drawer.h);
           const bz = bottomZ[idx];
-          addStlQuad(lines, { x: x0, y: y0, z: thickness }, { x: x1, y: y0, z: thickness }, { x: x1, y: y1, z: thickness }, { x: x0, y: y1, z: thickness });
-          addStlQuad(lines, { x: x0, y: y0, z: bz }, { x: x0, y: y1, z: bz }, { x: x1, y: y1, z: bz }, { x: x1, y: y0, z: bz });
+          addStlQuad(triangles, { x: x0, y: y0, z: thickness }, { x: x1, y: y0, z: thickness }, { x: x1, y: y1, z: thickness }, { x: x0, y: y1, z: thickness });
+          addStlQuad(triangles, { x: x0, y: y0, z: bz }, { x: x0, y: y1, z: bz }, { x: x1, y: y1, z: bz }, { x: x1, y: y0, z: bz });
           facets += 4;
 
           dirs.forEach(dir => {
             const nc = c + dir.dc;
             const nr = r + dir.dr;
             if (nc < 0 || nr < 0 || nc >= cols || nr >= rows || !solid[index(nc, nr)]) {
-              addGridEdgeFace(lines, x0, y0, x1, y1, dir.edge, bz, thickness);
+              addGridEdgeFace(triangles, x0, y0, x1, y1, dir.edge, bz, thickness);
               facets += 2;
             } else {
               const nbz = bottomZ[index(nc, nr)];
               if (nbz > bz + 0.001) {
-                addGridEdgeFace(lines, x0, y0, x1, y1, dir.edge, bz, nbz);
+                addGridEdgeFace(triangles, x0, y0, x1, y1, dir.edge, bz, nbz);
                 facets += 2;
               }
             }
           });
         }
       }
-      lines.push(`endsolid ${name}_hollow_shell`, "");
-      return { text: lines.join("\n"), cells: cellCount, facets, pitch, thickness, wall };
+      return { content: makeBinaryStl(triangles, `${name}_hollow_shell`), cells: cellCount, facets, pitch, thickness, wall };
     }
 
     function buildLayoutExportData() {
@@ -3092,8 +3103,8 @@
         const stl = makePrintableShellStl(data.ents, data.drawer, settings);
         updateBusy("Building 3D printable STL...", `${stl.cells.toLocaleString()} cells, ${stl.facets.toLocaleString()} facets.`, 86);
         await nextFrame();
-        download(`${safeFileBase(cleanProjectName())}_hollow_shell.stl`, stl.text, "model/stl");
-        showNotice(`Success: exported hollow STL at ${stl.pitch} mm mesh resolution with ${stl.wall} mm walls/skin.`);
+        download(`${safeFileBase(cleanProjectName())}_hollow_shell.stl`, stl.content, "model/stl");
+        showNotice(`Success: exported hollow STL at ${stl.pitch} mm contour detail with ${stl.wall} mm walls/skin.`);
       } catch (err) {
         showNotice("STL export blocked: " + err.message);
       } finally {

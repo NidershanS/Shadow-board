@@ -142,7 +142,8 @@ The STL export uses the same arranged drawer geometry as the full DXF export:
 - `Wall / skin mm` defaults to `2 mm`.
 - The outside perimeter and every tool-opening wall extend to the bottom of the model.
 - Areas away from perimeters and openings are shelled from the underside, leaving only the configured top skin thickness.
-- `STL mesh resolution mm` controls the grid pitch used for the browser-only mesh. Smaller values make smoother openings but larger STL files.
+- `STL contour detail mm` controls the grid pitch used for the browser-only mesh. The branch now defaults to `1.5 mm` and clamps older `3 mm` saved settings down for cleaner tool openings.
+- STL files are exported as binary STL to keep the smoother contour mesh practical in file size.
 
 This export is intentionally separate from the laser/DXF workflow. It is a first practical printable shell, not a final CAD boolean model. Always inspect the STL in the slicer before printing, especially around narrow tool gaps and small finger-pull features.
 
@@ -152,7 +153,7 @@ This export is intentionally separate from the laser/DXF workflow. It is a first
 - Strong shadows touching the tool can become part of the contour.
 - Finger-pull circles should overlap the main tool outline; fully separate circles are not intended.
 - The app exports polylines rather than true spline/arc geometry.
-- The experimental STL export is gridded, so curved openings are faceted according to the selected mesh resolution.
+- The experimental STL export is gridded, so curved openings are faceted according to the selected contour/detail resolution.
 - Browser `file://` security can block automated browser testing, but normal manual use is supported by opening the HTML file directly.
 - Browser save storage has a size limit. For large projects, use `Export Project` to save a portable JSON file.
 
