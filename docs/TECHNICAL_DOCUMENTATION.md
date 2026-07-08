@@ -130,12 +130,29 @@ Selected tool export:
 - Exports the selected tool as one local `CUT` contour.
 - Includes moved finger-pull handles as part of the same contour.
 
+## Experimental 3D Printable STL Export
+
+The `feature/3d-print-shell-export` branch adds an experimental `Export 3D STL` workflow for testing printed drawer inserts.
+
+The STL export uses the same arranged drawer geometry as the full DXF export:
+
+- The drawer rectangle becomes the printable board footprint.
+- Each arranged tool contour, including merged finger-pull geometry, becomes a through-opening.
+- The board is extruded by `Board thickness mm`.
+- `Wall / skin mm` defaults to `2 mm`.
+- The outside perimeter and every tool-opening wall extend to the bottom of the model.
+- Areas away from perimeters and openings are shelled from the underside, leaving only the configured top skin thickness.
+- `STL mesh resolution mm` controls the grid pitch used for the browser-only mesh. Smaller values make smoother openings but larger STL files.
+
+This export is intentionally separate from the laser/DXF workflow. It is a first practical printable shell, not a final CAD boolean model. Always inspect the STL in the slicer before printing, especially around narrow tool gaps and small finger-pull features.
+
 ## Known Limitations
 
 - Very shiny metal can still confuse segmentation if it reflects white paper strongly.
 - Strong shadows touching the tool can become part of the contour.
 - Finger-pull circles should overlap the main tool outline; fully separate circles are not intended.
 - The app exports polylines rather than true spline/arc geometry.
+- The experimental STL export is gridded, so curved openings are faceted according to the selected mesh resolution.
 - Browser `file://` security can block automated browser testing, but normal manual use is supported by opening the HTML file directly.
 - Browser save storage has a size limit. For large projects, use `Export Project` to save a portable JSON file.
 

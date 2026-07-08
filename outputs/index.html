@@ -495,6 +495,15 @@
     .report strong {
       color: var(--text);
     }
+    .printSettings {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
     .hidden { display: none; }
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
@@ -616,6 +625,16 @@
           </div>
           <button id="redoLayout">Redo</button>
           <div id="exportReport" class="report"></div>
+          <h2>3D Print</h2>
+          <div class="printSettings">
+            <div class="grid2">
+              <label>Board thickness mm<input id="stlThicknessInput" type="number" value="18" min="3" step="0.5"></label>
+              <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
+            </div>
+            <label>STL mesh resolution mm<input id="stlResolutionInput" type="number" value="3" min="1.5" step="0.5"></label>
+            <button id="downloadStl" class="secondary">Export 3D STL</button>
+            <div class="status">Experimental: creates a hollow-bottom printable board with tool openings and 2 mm walls/skin.</div>
+          </div>
           <h2>Layout Items</h2>
           <div id="layoutItems" class="selectedTools"></div>
         </div>
@@ -718,6 +737,10 @@
       projectName: document.getElementById("projectName"),
       arrangeSpacingInput: document.getElementById("arrangeSpacingInput"),
       arrangeTimeInput: document.getElementById("arrangeTimeInput"),
+      stlThicknessInput: document.getElementById("stlThicknessInput"),
+      stlWallInput: document.getElementById("stlWallInput"),
+      stlResolutionInput: document.getElementById("stlResolutionInput"),
+      downloadStl: document.getElementById("downloadStl"),
       saveProject: document.getElementById("saveProject"),
       loadProject: document.getElementById("loadProject"),
       newProject: document.getElementById("newProject"),
@@ -874,7 +897,10 @@
           spacing: Number(el.spacingInput.value),
           arrangeSpacing: Number(el.arrangeSpacingInput.value),
           arrangeTime: Number(el.arrangeTimeInput.value),
-          finger: Number(el.fingerInput.value)
+          finger: Number(el.fingerInput.value),
+          stlThickness: Number(el.stlThicknessInput.value),
+          stlWall: Number(el.stlWallInput.value),
+          stlResolution: Number(el.stlResolutionInput.value)
         },
         tools: state.tools.map(tool => ({
           id: tool.id,
@@ -918,6 +944,9 @@
       el.arrangeSpacingInput.value = settings.arrangeSpacing ?? 10;
       el.arrangeTimeInput.value = settings.arrangeTime ?? 8;
       el.fingerInput.value = settings.finger ?? 14;
+      el.stlThicknessInput.value = settings.stlThickness ?? 18;
+      el.stlWallInput.value = settings.stlWall ?? 2;
+      el.stlResolutionInput.value = settings.stlResolution ?? 3;
       state.files = [];
       state.pendingFiles = [];
       state.tools = project.tools.map(tool => ({
@@ -2819,6 +2848,135 @@
       return lines.join("\n");
     }
 
+    function stlPoint(p) {
+      return `      vertex ${p.x.toFixed(3)} ${p.y.toFixed(3)} ${p.z.toFixed(3)}`;
+    }
+
+    function addStlTriangle(lines, a, b, c) {
+      lines.push(
+        "  facet normal 0 0 0",
+        "    outer loop",
+        stlPoint(a),
+        stlPoint(b),
+        stlPoint(c),
+        "    endloop",
+        "  endfacet"
+      );
+    }
+
+    function addStlQuad(lines, a, b, c, d) {
+      addStlTriangle(lines, a, b, c);
+      addStlTriangle(lines, a, c, d);
+    }
+
+    function normalizeClosedPolygon(points) {
+      const clean = points.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+      if (clean.length < 3) return [];
+      const first = clean[0];
+      const last = clean[clean.length - 1];
+      if (Math.hypot(first.x - last.x, first.y - last.y) > 0.001) clean.push({ ...first });
+      return clean;
+    }
+
+    function distanceToPolygonSegments(p, poly) {
+      let best = Infinity;
+      for (let i = 0; i < poly.length - 1; i++) {
+        best = Math.min(best, pointSegmentDistance(p, poly[i], poly[i + 1]));
+      }
+      return best;
+    }
+
+    function addGridEdgeFace(lines, x0, y0, x1, y1, edge, z0, z1) {
+      if (Math.abs(z1 - z0) < 0.001) return;
+      if (edge === "left") {
+        addStlQuad(lines, { x: x0, y: y0, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y1, z: z1 }, { x: x0, y: y0, z: z1 });
+      } else if (edge === "right") {
+        addStlQuad(lines, { x: x1, y: y1, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x1, y: y1, z: z1 });
+      } else if (edge === "top") {
+        addStlQuad(lines, { x: x0, y: y0, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x0, y: y0, z: z1 });
+      } else {
+        addStlQuad(lines, { x: x1, y: y1, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y1, z: z1 }, { x: x1, y: y1, z: z1 });
+      }
+    }
+
+    function makePrintableShellStl(cutEntities, drawer, settings) {
+      const thickness = Math.max(3, Number(settings.thickness) || 18);
+      const wall = Math.max(0.8, Number(settings.wall) || 2);
+      const pitch = Math.max(1.5, Number(settings.pitch) || 3);
+      if (wall >= thickness) throw new Error("Wall / skin thickness must be smaller than board thickness.");
+      const cols = Math.ceil(drawer.w / pitch);
+      const rows = Math.ceil(drawer.h / pitch);
+      const cellCount = cols * rows;
+      if (cellCount > 180000) {
+        throw new Error(`STL mesh would use ${cellCount.toLocaleString()} cells. Increase STL mesh resolution mm.`);
+      }
+      const cuts = cutEntities.map(ent => normalizeClosedPolygon(ent.points)).filter(poly => poly.length > 3);
+      const solid = new Uint8Array(cellCount);
+      const bottomZ = new Float32Array(cellCount);
+      const skinBottom = Math.max(0, thickness - wall);
+      const wallBand = wall + pitch * 0.55;
+      const index = (c, r) => r * cols + c;
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const x0 = c * pitch;
+          const y0 = r * pitch;
+          const x1 = Math.min((c + 1) * pitch, drawer.w);
+          const y1 = Math.min((r + 1) * pitch, drawer.h);
+          const p = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+          if (cuts.some(poly => pointInPolygon(p, poly))) continue;
+
+          let fullDepthWall = p.x <= wallBand || p.y <= wallBand || p.x >= drawer.w - wallBand || p.y >= drawer.h - wallBand;
+          if (!fullDepthWall) {
+            fullDepthWall = cuts.some(poly => distanceToPolygonSegments(p, poly) <= wallBand);
+          }
+          solid[index(c, r)] = 1;
+          bottomZ[index(c, r)] = fullDepthWall ? 0 : skinBottom;
+        }
+      }
+
+      const name = safeFileBase(cleanProjectName()) || "shadow_board";
+      const lines = [`solid ${name}_hollow_shell`];
+      const dirs = [
+        { dc: -1, dr: 0, edge: "left" },
+        { dc: 1, dr: 0, edge: "right" },
+        { dc: 0, dr: -1, edge: "top" },
+        { dc: 0, dr: 1, edge: "bottom" }
+      ];
+      let facets = 0;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const idx = index(c, r);
+          if (!solid[idx]) continue;
+          const x0 = c * pitch;
+          const y0 = r * pitch;
+          const x1 = Math.min((c + 1) * pitch, drawer.w);
+          const y1 = Math.min((r + 1) * pitch, drawer.h);
+          const bz = bottomZ[idx];
+          addStlQuad(lines, { x: x0, y: y0, z: thickness }, { x: x1, y: y0, z: thickness }, { x: x1, y: y1, z: thickness }, { x: x0, y: y1, z: thickness });
+          addStlQuad(lines, { x: x0, y: y0, z: bz }, { x: x0, y: y1, z: bz }, { x: x1, y: y1, z: bz }, { x: x1, y: y0, z: bz });
+          facets += 4;
+
+          dirs.forEach(dir => {
+            const nc = c + dir.dc;
+            const nr = r + dir.dr;
+            if (nc < 0 || nr < 0 || nc >= cols || nr >= rows || !solid[index(nc, nr)]) {
+              addGridEdgeFace(lines, x0, y0, x1, y1, dir.edge, bz, thickness);
+              facets += 2;
+            } else {
+              const nbz = bottomZ[index(nc, nr)];
+              if (nbz > bz + 0.001) {
+                addGridEdgeFace(lines, x0, y0, x1, y1, dir.edge, bz, nbz);
+                facets += 2;
+              }
+            }
+          });
+        }
+      }
+      lines.push(`endsolid ${name}_hollow_shell`, "");
+      return { text: lines.join("\n"), cells: cellCount, facets, pitch, thickness, wall };
+    }
+
     function buildLayoutExportData() {
       if (!state.items.length) {
         return { error: "No layout items to export. Add at least one accepted tool to the drawer first." };
@@ -2915,6 +3073,32 @@
         return;
       }
       showExportPreview(data);
+    }
+
+    async function exportPrintableStl() {
+      const data = buildLayoutExportData();
+      if (data.error) {
+        showNotice(data.error.replace("drawer DXF export", "3D STL export"));
+        return;
+      }
+      const settings = {
+        thickness: Number(el.stlThicknessInput.value),
+        wall: Number(el.stlWallInput.value),
+        pitch: Number(el.stlResolutionInput.value)
+      };
+      showBusy("Building 3D printable STL...", "Generating hollow-bottom shell mesh.", 12);
+      await nextFrame();
+      try {
+        const stl = makePrintableShellStl(data.ents, data.drawer, settings);
+        updateBusy("Building 3D printable STL...", `${stl.cells.toLocaleString()} cells, ${stl.facets.toLocaleString()} facets.`, 86);
+        await nextFrame();
+        download(`${safeFileBase(cleanProjectName())}_hollow_shell.stl`, stl.text, "model/stl");
+        showNotice(`Success: exported hollow STL at ${stl.pitch} mm mesh resolution with ${stl.wall} mm walls/skin.`);
+      } catch (err) {
+        showNotice("STL export blocked: " + err.message);
+      } finally {
+        hideBusy();
+      }
     }
 
     function validateLayout() {
@@ -3118,6 +3302,7 @@
     el.zoomOut.addEventListener("click", () => zoomView(0.82));
     el.zoomIn.addEventListener("click", () => zoomView(1.22));
     el.downloadLayout.addEventListener("click", exportLayout);
+    el.downloadStl.addEventListener("click", exportPrintableStl);
     el.downloadSelected.addEventListener("click", exportSelected);
     el.autoArrange.addEventListener("click", () => autoArrangeAll());
     el.duplicateSelected.addEventListener("click", () => {
@@ -3174,7 +3359,7 @@
       drawLayout();
     });
 
-    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput, el.arrangeTimeInput].forEach(input => {
+    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput, el.arrangeTimeInput, el.stlThicknessInput, el.stlWallInput, el.stlResolutionInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();
         scheduleAutosave();
