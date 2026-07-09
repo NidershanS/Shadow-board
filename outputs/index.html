@@ -538,6 +538,15 @@
       color: var(--text);
       font-size: 16px;
     }
+    .printSettings {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
     .hidden { display: none; }
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
@@ -673,6 +682,16 @@
           </div>
           <button id="lockSelected">Lock Position</button>
           <div id="exportReport" class="report"></div>
+          <h2>3D Print</h2>
+          <div class="printSettings">
+            <div class="grid2">
+              <label>Board thickness mm<input id="stlThicknessInput" type="number" value="18" min="3" step="0.5"></label>
+              <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
+            </div>
+            <label>STL cavity detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="1.5" step="0.25"></label>
+            <button id="downloadStl" class="secondary">Export 3D STL</button>
+            <div class="status">Experimental: creates a hollow-bottom printable board with refined tool openings and 2 mm walls/skin.</div>
+          </div>
           <h2>Layout Items</h2>
           <div id="layoutItems" class="selectedTools"></div>
         </div>
@@ -785,6 +804,10 @@
       projectName: document.getElementById("projectName"),
       arrangeSpacingInput: document.getElementById("arrangeSpacingInput"),
       arrangeTimeInput: document.getElementById("arrangeTimeInput"),
+      stlThicknessInput: document.getElementById("stlThicknessInput"),
+      stlWallInput: document.getElementById("stlWallInput"),
+      stlResolutionInput: document.getElementById("stlResolutionInput"),
+      downloadStl: document.getElementById("downloadStl"),
       saveProject: document.getElementById("saveProject"),
       loadProject: document.getElementById("loadProject"),
       newProject: document.getElementById("newProject"),
@@ -971,7 +994,10 @@
           spacing: Number(el.spacingInput.value),
           arrangeSpacing: Number(el.arrangeSpacingInput.value),
           arrangeTime: Number(el.arrangeTimeInput.value),
-          finger: Number(el.fingerInput.value)
+          finger: Number(el.fingerInput.value),
+          stlThickness: Number(el.stlThicknessInput.value),
+          stlWall: Number(el.stlWallInput.value),
+          stlResolution: Number(el.stlResolutionInput.value)
         },
         tools: state.tools.map(tool => ({
           id: tool.id,
@@ -1015,6 +1041,9 @@
       el.arrangeSpacingInput.value = settings.arrangeSpacing ?? 10;
       el.arrangeTimeInput.value = settings.arrangeTime ?? 8;
       el.fingerInput.value = settings.finger ?? 14;
+      el.stlThicknessInput.value = settings.stlThickness ?? 18;
+      el.stlWallInput.value = settings.stlWall ?? 2;
+      el.stlResolutionInput.value = Math.min(1.5, Math.max(0.75, Number(settings.stlResolution ?? 1.5)));
       state.files = [];
       state.pendingFiles = [];
       state.tools = project.tools.map(tool => ({
@@ -3195,6 +3224,797 @@
       return lines.join("\n");
     }
 
+    function addStlTriangle(triangles, a, b, c) {
+      triangles.push([a, b, c]);
+    }
+
+    function addStlQuad(triangles, a, b, c, d) {
+      addStlTriangle(triangles, a, b, c);
+      addStlTriangle(triangles, a, c, d);
+    }
+
+    function facetNormal(a, b, c) {
+      const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+      const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      const len = Math.hypot(nx, ny, nz);
+      if (len < 1e-9) return null;
+      return { x: nx / len, y: ny / len, z: nz / len };
+    }
+
+    function makeBinaryStl(triangles, name) {
+      const facets = [];
+      triangles.forEach(tri => {
+        const n = facetNormal(tri[0], tri[1], tri[2]);
+        if (n) facets.push({ tri, n });
+      });
+      const buffer = new ArrayBuffer(84 + facets.length * 50);
+      const view = new DataView(buffer);
+      const header = `Shadow Board hollow shell ${name}`.slice(0, 80);
+      for (let i = 0; i < header.length; i++) view.setUint8(i, header.charCodeAt(i));
+      view.setUint32(80, facets.length, true);
+      let offset = 84;
+      facets.forEach(({ tri, n }) => {
+        view.setFloat32(offset, n.x, true);
+        view.setFloat32(offset + 4, n.y, true);
+        view.setFloat32(offset + 8, n.z, true);
+        offset += 12;
+        tri.forEach(p => {
+          view.setFloat32(offset, p.x, true);
+          view.setFloat32(offset + 4, p.y, true);
+          view.setFloat32(offset + 8, p.z, true);
+          offset += 12;
+        });
+        view.setUint16(offset, 0, true);
+        offset += 2;
+      });
+      return buffer;
+    }
+
+    function signedArea2(points) {
+      let area = 0;
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+        area += a.x * b.y - b.x * a.y;
+      }
+      return area;
+    }
+
+    function toOpenLoop(points, minStep = 0.01) {
+      const pts = [];
+      for (const p of points) {
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+        const prev = pts[pts.length - 1];
+        if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < minStep) continue;
+        pts.push({ x: p.x, y: p.y });
+      }
+      while (pts.length > 1 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < minStep) pts.pop();
+      return pts;
+    }
+
+    function rdpSimplify(points, epsilon) {
+      if (points.length < 3) return points.slice();
+      const keep = new Uint8Array(points.length);
+      keep[0] = keep[points.length - 1] = 1;
+      const stack = [[0, points.length - 1]];
+      while (stack.length) {
+        const [s, e] = stack.pop();
+        let maxD = -1, maxI = -1;
+        for (let i = s + 1; i < e; i++) {
+          const d = pointSegmentDistance(points[i], points[s], points[e]);
+          if (d > maxD) { maxD = d; maxI = i; }
+        }
+        if (maxD > epsilon) {
+          keep[maxI] = 1;
+          stack.push([s, maxI], [maxI, e]);
+        }
+      }
+      return points.filter((_, i) => keep[i]);
+    }
+
+    function simplifyClosedLoop(points, epsilon) {
+      if (points.length < 8) return points.slice();
+      let far = 1, best = -1;
+      for (let i = 1; i < points.length; i++) {
+        const d = Math.hypot(points[i].x - points[0].x, points[i].y - points[0].y);
+        if (d > best) { best = d; far = i; }
+      }
+      const first = rdpSimplify(points.slice(0, far + 1), epsilon);
+      const second = rdpSimplify(points.slice(far).concat([points[0]]), epsilon);
+      return first.slice(0, -1).concat(second.slice(0, -1));
+    }
+
+    function distanceToPolygonSegments(p, poly) {
+      let best = Infinity;
+      for (let i = 0; i < poly.length - 1; i++) {
+        best = Math.min(best, pointSegmentDistance(p, poly[i], poly[i + 1]));
+      }
+      return best;
+    }
+
+    // Ear-clipping triangulation with hole support (port of mapbox/earcut, without z-order hashing).
+    let ecNodeSeq = 0;
+
+    function ecNode(i, x, y, ref) {
+      return { i, x, y, ref, prev: null, next: null, steiner: false };
+    }
+
+    function ecInsertNode(p, last) {
+      const node = ecNode(ecNodeSeq++, p.x, p.y, p);
+      if (!last) {
+        node.prev = node;
+        node.next = node;
+      } else {
+        node.next = last.next;
+        node.prev = last;
+        last.next.prev = node;
+        last.next = node;
+      }
+      return node;
+    }
+
+    function ecRemoveNode(p) {
+      p.next.prev = p.prev;
+      p.prev.next = p.next;
+    }
+
+    function ecArea(p, q, r) {
+      return (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+    }
+
+    function ecEquals(a, b) {
+      return a.x === b.x && a.y === b.y;
+    }
+
+    function ecSign(num) {
+      return num > 0 ? 1 : num < 0 ? -1 : 0;
+    }
+
+    function ecOnSegment(p, q, r) {
+      return q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) && q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y);
+    }
+
+    function ecIntersects(p1, q1, p2, q2) {
+      const o1 = ecSign(ecArea(p1, q1, p2));
+      const o2 = ecSign(ecArea(p1, q1, q2));
+      const o3 = ecSign(ecArea(p2, q2, p1));
+      const o4 = ecSign(ecArea(p2, q2, q1));
+      if (o1 !== o2 && o3 !== o4) return true;
+      if (o1 === 0 && ecOnSegment(p1, p2, q1)) return true;
+      if (o2 === 0 && ecOnSegment(p1, q2, q1)) return true;
+      if (o3 === 0 && ecOnSegment(p2, p1, q2)) return true;
+      if (o4 === 0 && ecOnSegment(p2, q1, q2)) return true;
+      return false;
+    }
+
+    function ecIntersectsPolygon(a, b) {
+      let p = a;
+      do {
+        if (p.i !== a.i && p.next.i !== a.i && p.i !== b.i && p.next.i !== b.i && ecIntersects(p, p.next, a, b)) return true;
+        p = p.next;
+      } while (p !== a);
+      return false;
+    }
+
+    function ecLocallyInside(a, b) {
+      return ecArea(a.prev, a, a.next) < 0
+        ? ecArea(a, b, a.next) >= 0 && ecArea(a, a.prev, b) >= 0
+        : ecArea(a, b, a.prev) < 0 || ecArea(a, a.next, b) < 0;
+    }
+
+    function ecMiddleInside(a, b) {
+      let p = a;
+      let inside = false;
+      const px = (a.x + b.x) / 2;
+      const py = (a.y + b.y) / 2;
+      do {
+        if (((p.y > py) !== (p.next.y > py)) && p.next.y !== p.y && (px < (p.next.x - p.x) * (py - p.y) / (p.next.y - p.y) + p.x)) inside = !inside;
+        p = p.next;
+      } while (p !== a);
+      return inside;
+    }
+
+    function ecValidDiagonal(a, b) {
+      return a.next.i !== b.i && a.prev.i !== b.i && !ecIntersectsPolygon(a, b) &&
+        (ecLocallyInside(a, b) && ecLocallyInside(b, a) && ecMiddleInside(a, b) &&
+          (ecArea(a.prev, a, b.prev) || ecArea(a, b.prev, b)) ||
+          ecEquals(a, b) && ecArea(a.prev, a, a.next) > 0 && ecArea(b.prev, b, b.next) > 0);
+    }
+
+    function ecSplitPolygon(a, b) {
+      const a2 = ecNode(a.i, a.x, a.y, a.ref);
+      const b2 = ecNode(b.i, b.x, b.y, b.ref);
+      const an = a.next;
+      const bp = b.prev;
+      a.next = b;
+      b.prev = a;
+      a2.next = an;
+      an.prev = a2;
+      b2.next = a2;
+      a2.prev = b2;
+      bp.next = b2;
+      b2.prev = bp;
+      return b2;
+    }
+
+    function ecFilterPoints(start, end) {
+      if (!start) return start;
+      if (!end) end = start;
+      let p = start;
+      let again;
+      do {
+        again = false;
+        if (!p.steiner && (ecEquals(p, p.next) || ecArea(p.prev, p, p.next) === 0)) {
+          ecRemoveNode(p);
+          p = end = p.prev;
+          if (p === p.next) break;
+          again = true;
+        } else {
+          p = p.next;
+        }
+      } while (again || p !== end);
+      return end;
+    }
+
+    function ecPointInTriangle(ax, ay, bx, by, cx, cy, px, py) {
+      return (cx - px) * (ay - py) >= (ax - px) * (cy - py) &&
+        (ax - px) * (by - py) >= (bx - px) * (ay - py) &&
+        (bx - px) * (cy - py) >= (cx - px) * (by - py);
+    }
+
+    function ecIsEar(ear) {
+      const a = ear.prev, b = ear, c = ear.next;
+      if (ecArea(a, b, c) >= 0) return false;
+      const x0 = Math.min(a.x, b.x, c.x), y0 = Math.min(a.y, b.y, c.y);
+      const x1 = Math.max(a.x, b.x, c.x), y1 = Math.max(a.y, b.y, c.y);
+      let p = c.next;
+      while (p !== a) {
+        if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 &&
+          ecPointInTriangle(a.x, a.y, b.x, b.y, c.x, c.y, p.x, p.y) &&
+          ecArea(p.prev, p, p.next) >= 0) return false;
+        p = p.next;
+      }
+      return true;
+    }
+
+    function ecCureLocalIntersections(start, triangles) {
+      let p = start;
+      do {
+        const a = p.prev;
+        const b = p.next.next;
+        if (!ecEquals(a, b) && ecIntersects(a, p, p.next, b) && ecLocallyInside(a, b) && ecLocallyInside(b, a)) {
+          triangles.push([a.ref, p.ref, b.ref]);
+          ecRemoveNode(p);
+          ecRemoveNode(p.next);
+          p = start = b;
+        }
+        p = p.next;
+      } while (p !== start);
+      return ecFilterPoints(p);
+    }
+
+    function ecSplitEarcut(start, triangles) {
+      let a = start;
+      do {
+        let b = a.next.next;
+        while (b !== a.prev) {
+          if (a.i !== b.i && ecValidDiagonal(a, b)) {
+            let c = ecSplitPolygon(a, b);
+            a = ecFilterPoints(a, a.next);
+            c = ecFilterPoints(c, c.next);
+            ecEarcutLinked(a, triangles, 0);
+            ecEarcutLinked(c, triangles, 0);
+            return;
+          }
+          b = b.next;
+        }
+        a = a.next;
+      } while (a !== start);
+    }
+
+    function ecEarcutLinked(ear, triangles, pass) {
+      if (!ear) return;
+      let stop = ear;
+      while (ear.prev !== ear.next) {
+        const prev = ear.prev;
+        const next = ear.next;
+        if (ecIsEar(ear)) {
+          triangles.push([prev.ref, ear.ref, next.ref]);
+          ecRemoveNode(ear);
+          ear = next.next;
+          stop = next.next;
+          continue;
+        }
+        ear = next;
+        if (ear === stop) {
+          if (!pass) {
+            ecEarcutLinked(ecFilterPoints(ear), triangles, 1);
+          } else if (pass === 1) {
+            ear = ecCureLocalIntersections(ecFilterPoints(ear), triangles);
+            ecEarcutLinked(ear, triangles, 2);
+          } else if (pass === 2) {
+            ecSplitEarcut(ear, triangles);
+          }
+          break;
+        }
+      }
+    }
+
+    function ecGetLeftmost(start) {
+      let p = start;
+      let leftmost = start;
+      do {
+        if (p.x < leftmost.x || (p.x === leftmost.x && p.y < leftmost.y)) leftmost = p;
+        p = p.next;
+      } while (p !== start);
+      return leftmost;
+    }
+
+    function ecSectorContainsSector(m, p) {
+      return ecArea(m.prev, m, p.prev) < 0 && ecArea(p.next, m, m.next) < 0;
+    }
+
+    function ecFindHoleBridge(hole, outerNode) {
+      let p = outerNode;
+      const hx = hole.x;
+      const hy = hole.y;
+      let qx = -Infinity;
+      let m = null;
+      do {
+        if (hy <= p.y && hy >= p.next.y && p.next.y !== p.y) {
+          const x = p.x + (hy - p.y) * (p.next.x - p.x) / (p.next.y - p.y);
+          if (x <= hx && x > qx) {
+            qx = x;
+            m = p.x < p.next.x ? p : p.next;
+            if (x === hx) return m;
+          }
+        }
+        p = p.next;
+      } while (p !== outerNode);
+      if (!m) return null;
+      const stop = m;
+      const mx = m.x;
+      const my = m.y;
+      let tanMin = Infinity;
+      p = m;
+      do {
+        if (hx >= p.x && p.x >= mx && hx !== p.x &&
+          ecPointInTriangle(hy < my ? hx : qx, hy, mx, my, hy < my ? qx : hx, hy, p.x, p.y)) {
+          const tan = Math.abs(hy - p.y) / (hx - p.x);
+          if (ecLocallyInside(p, hole) &&
+            (tan < tanMin || (tan === tanMin && (p.x > m.x || (p.x === m.x && ecSectorContainsSector(m, p)))))) {
+            m = p;
+            tanMin = tan;
+          }
+        }
+        p = p.next;
+      } while (p !== stop);
+      return m;
+    }
+
+    function ecEliminateHole(hole, outerNode) {
+      const bridge = ecFindHoleBridge(hole, outerNode);
+      if (!bridge) return outerNode;
+      const bridgeReverse = ecSplitPolygon(bridge, hole);
+      ecFilterPoints(bridgeReverse, bridgeReverse.next);
+      return ecFilterPoints(bridge, bridge.next);
+    }
+
+    function ecLinkedList(points, ccw) {
+      const ordered = ((signedArea2(points) > 0) === ccw) ? points : points.slice().reverse();
+      let last = null;
+      for (const p of ordered) last = ecInsertNode(p, last);
+      return last;
+    }
+
+    function triangulatePolygonWithHoles(outerPts, holeLoops) {
+      if (!outerPts || outerPts.length < 3) return [];
+      let outerNode = ecLinkedList(outerPts, true);
+      if (!outerNode || outerNode.next === outerNode.prev) return [];
+      const holeQueue = [];
+      (holeLoops || []).forEach(loop => {
+        if (!loop || loop.length < 3) return;
+        const list = ecLinkedList(loop, false);
+        if (list) {
+          if (list === list.next) list.steiner = true;
+          holeQueue.push(ecGetLeftmost(list));
+        }
+      });
+      holeQueue.sort((a, b) => a.x - b.x);
+      holeQueue.forEach(h => { outerNode = ecEliminateHole(h, outerNode); });
+      outerNode = ecFilterPoints(outerNode);
+      const triangles = [];
+      ecEarcutLinked(outerNode, triangles, 0);
+      return triangles;
+    }
+
+    // Insert midpoints along long edges, nudged 2 microns inward: exact collinear
+    // points would be filtered away by the triangulator, reopening T-junctions
+    // against the wall extrusion, and 0.002 mm is far below print resolution.
+    function densifyLoop(loop, maxStep) {
+      const inwardSign = signedArea2(loop) > 0 ? 1 : -1;
+      const out = [];
+      for (let i = 0; i < loop.length; i++) {
+        const a = loop[i], b = loop[(i + 1) % loop.length];
+        out.push(a);
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const n = Math.floor(len / maxStep);
+        if (!n) continue;
+        const nx = -(b.y - a.y) / len * inwardSign;
+        const ny = (b.x - a.x) / len * inwardSign;
+        for (let k = 1; k <= n; k++) {
+          const t = k / (n + 1);
+          // varying inward nudge (0.03-0.08 mm, invisible in print) so inserted points are
+          // never collinear: exact collinearity gets them filtered by the triangulator, and
+          // micron-scale nudges create degenerate slivers that poison face refinement
+          const s = Math.sin(k * 12.9898 + i * 78.233) * 43758.5453;
+          const d = 0.03 + 0.05 * (s - Math.floor(s));
+          out.push({ x: a.x + (b.x - a.x) * t + nx * d, y: a.y + (b.y - a.y) * t + ny * d });
+        }
+      }
+      return out;
+    }
+
+    // Bowyer-Watson Delaunay mesh over the exact loop vertices plus an interior point
+    // grid, filtered to the face region. Loop edges are kept short relative to their
+    // clearance (see densifyLoop call sites), so they all appear as Delaunay edges and
+    // the face boundary matches the wall extrusions vertex-for-vertex. Returns null if
+    // any boundary edge is missing (degenerate clearances) so callers can fall back.
+    function delaunayFaceMesh(outer, holes, maxEdge) {
+      const loops = [outer, ...(holes || [])];
+      const pts = [];
+      loops.forEach(loop => loop.forEach(p => pts.push(p)));
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      outer.forEach(p => {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      });
+      // interior grid with clearance so it cannot break boundary Delaunay edges
+      const spacing = maxEdge * 0.85;
+      const margin = maxEdge * 0.55;
+      const loopData = loops.map(l => {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        l.forEach(p => {
+          x0 = Math.min(x0, p.x);
+          x1 = Math.max(x1, p.x);
+          y0 = Math.min(y0, p.y);
+          y1 = Math.max(y1, p.y);
+        });
+        return { loop: l, closed: l.concat([l[0]]), x0: x0 - margin, y0: y0 - margin, x1: x1 + margin, y1: y1 + margin };
+      });
+      if (maxX - minX > spacing * 2 && maxY - minY > spacing * 2) {
+        let iy = 0;
+        for (let y = minY + spacing; y < maxY - spacing / 2; y += spacing, iy++) {
+          for (let x = minX + spacing * (iy % 2 ? 1 : 0.5); x < maxX - spacing / 2; x += spacing) {
+            const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+            const p = { x: x + (s - Math.floor(s) - 0.5) * spacing * 0.25, y: y + (Math.abs(s * 7) % 1 - 0.5) * spacing * 0.25 };
+            if (!pointInPolygon(p, outer)) continue;
+            let ok = true;
+            for (let li = 0; li < loopData.length; li++) {
+              const ld = loopData[li];
+              const insideBox = p.x >= ld.x0 && p.x <= ld.x1 && p.y >= ld.y0 && p.y <= ld.y1;
+              if (li > 0 && insideBox && pointInPolygon(p, ld.loop)) { ok = false; break; }
+              if (insideBox && distanceToPolygonSegments(p, ld.closed) < margin) { ok = false; break; }
+            }
+            if (ok) pts.push(p);
+          }
+        }
+      }
+      const N = pts.length;
+      const size = Math.max(maxX - minX, maxY - minY, 1);
+      const ccx = (minX + maxX) / 2, ccy = (minY + maxY) / 2;
+      const superPts = [
+        { x: ccx - 20 * size, y: ccy - 10 * size },
+        { x: ccx + 20 * size, y: ccy - 10 * size },
+        { x: ccx, y: ccy + 20 * size }
+      ];
+      const PT = i => (i < N ? pts[i] : superPts[i - N]);
+      const makeTri = (a, b, c) => {
+        const A = PT(a), B = PT(b), C = PT(c);
+        const d = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y));
+        if (Math.abs(d) < 1e-12) return null;
+        const a2 = A.x * A.x + A.y * A.y, b2 = B.x * B.x + B.y * B.y, c2 = C.x * C.x + C.y * C.y;
+        const ux = (a2 * (B.y - C.y) + b2 * (C.y - A.y) + c2 * (A.y - B.y)) / d;
+        const uy = (a2 * (C.x - B.x) + b2 * (A.x - C.x) + c2 * (B.x - A.x)) / d;
+        return { a, b, c, ux, uy, r2: (A.x - ux) * (A.x - ux) + (A.y - uy) * (A.y - uy) };
+      };
+      let tris = [makeTri(N, N + 1, N + 2)];
+      const ek = (u, v) => (u < v ? u * 4194304 + v : v * 4194304 + u);
+      for (let i = 0; i < N; i++) {
+        const p = pts[i];
+        const bad = [];
+        const rest = [];
+        for (const t of tris) {
+          const dx = p.x - t.ux, dy = p.y - t.uy;
+          if (dx * dx + dy * dy < t.r2 - 1e-9) bad.push(t);
+          else rest.push(t);
+        }
+        const edgeCount = new Map();
+        bad.forEach(t => {
+          [[t.a, t.b], [t.b, t.c], [t.c, t.a]].forEach(([u, v]) => {
+            const k = ek(u, v);
+            edgeCount.set(k, (edgeCount.get(k) || 0) + 1);
+          });
+        });
+        bad.forEach(t => {
+          [[t.a, t.b], [t.b, t.c], [t.c, t.a]].forEach(([u, v]) => {
+            if (edgeCount.get(ek(u, v)) === 1) {
+              const nt = makeTri(u, v, i);
+              if (nt) rest.push(nt);
+            }
+          });
+        });
+        tris = rest;
+      }
+      const region = [];
+      const present = new Set();
+      for (const t of tris) {
+        if (t.a >= N || t.b >= N || t.c >= N) continue;
+        const A = pts[t.a], B = pts[t.b], C = pts[t.c];
+        const g = { x: (A.x + B.x + C.x) / 3, y: (A.y + B.y + C.y) / 3 };
+        if (!pointInPolygon(g, outer)) continue;
+        let inHole = false;
+        for (let li = 1; li < loopData.length; li++) {
+          const ld = loopData[li];
+          if (g.x >= ld.x0 && g.x <= ld.x1 && g.y >= ld.y0 && g.y <= ld.y1 && pointInPolygon(g, ld.loop)) {
+            inHole = true;
+            break;
+          }
+        }
+        if (inHole) continue;
+        region.push(t);
+        present.add(ek(t.a, t.b));
+        present.add(ek(t.b, t.c));
+        present.add(ek(t.c, t.a));
+      }
+      let base = 0;
+      for (const loop of loops) {
+        for (let i = 0; i < loop.length; i++) {
+          if (!present.has(ek(base + i, base + ((i + 1) % loop.length)))) return null;
+        }
+        base += loop.length;
+      }
+      return region.map(t => {
+        const A = pts[t.a], B = pts[t.b], C = pts[t.c];
+        const cr = (B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x);
+        return cr >= 0 ? [A, B, C] : [A, C, B];
+      });
+    }
+
+    // Recursively split oversized face triangles at their centroid (1 -> 3). Purely
+    // local, so it is conformal by construction: no edge is ever split, boundary
+    // edges shared with wall extrusions stay intact, and area is exactly preserved.
+    // Inserted centroids are interior vertices with pure face normals, which is what
+    // smooth-shading viewers need; leftover skinny slivers shrink to hairlines.
+    function refineFaceTriangulation(inputTris, maxEdge) {
+      const maxArea = maxEdge * maxEdge * 0.5;
+      const out = [];
+      const stack = inputTris.slice();
+      let guard = 120000;
+      while (stack.length) {
+        const tri = stack.pop();
+        const [a, b, c] = tri;
+        const area = Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) / 2;
+        if (area <= maxArea || guard <= 0) {
+          out.push(tri);
+          continue;
+        }
+        const g = { x: (a.x + b.x + c.x) / 3, y: (a.y + b.y + c.y) / 3 };
+        stack.push([a, b, g], [b, c, g], [c, a, g]);
+        guard--;
+      }
+      return out;
+    }
+
+    function traceMaskLoops(mask, w, h) {
+      const pw = w + 2, ph = h + 2;
+      const padded = new Uint8Array(pw * ph);
+      for (let y = 0; y < h; y++) {
+        padded.set(mask.subarray(y * w, y * w + w), (y + 1) * pw + 1);
+      }
+      const graph = new Map();
+      const key = p => p[0] + "," + p[1];
+      function add(a, b) {
+        const ka = key(a), kb = key(b);
+        if (!graph.has(ka)) graph.set(ka, []);
+        if (!graph.has(kb)) graph.set(kb, []);
+        graph.get(ka).push(kb);
+        graph.get(kb).push(ka);
+      }
+      for (let y = 0; y < ph - 1; y++) {
+        for (let x = 0; x < pw - 1; x++) {
+          const tl = padded[y * pw + x], tr = padded[y * pw + x + 1];
+          const br = padded[(y + 1) * pw + x + 1], bl = padded[(y + 1) * pw + x];
+          const idx = tl | (tr << 1) | (br << 2) | (bl << 3);
+          const segs = SEGMENTS[idx] || [];
+          for (const [a, b] of segs) add(edgePoint(x - 1, y - 1, a), edgePoint(x - 1, y - 1, b));
+        }
+      }
+      const used = new Set();
+      const loops = [];
+      for (const [start, nbrs] of graph) {
+        for (const nxt of nbrs) {
+          if (used.has([start, nxt].sort().join("|"))) continue;
+          const path = [start];
+          let prev = start, cur = nxt, closed = false;
+          for (let guard = 0; guard < 200000; guard++) {
+            used.add([prev, cur].sort().join("|"));
+            if (cur === start) {
+              closed = true;
+              break;
+            }
+            path.push(cur);
+            const candidates = (graph.get(cur) || []).filter(p => p !== prev);
+            if (!candidates.length) break;
+            const unused = candidates.find(p => !used.has([cur, p].sort().join("|")));
+            prev = cur;
+            cur = unused || candidates[0];
+          }
+          if (closed && path.length > 8) {
+            loops.push(path.map(s => {
+              const [x, y] = s.split(",").map(Number);
+              return { x: x / 2, y: y / 2 };
+            }));
+          }
+        }
+      }
+      return loops;
+    }
+
+    function makePrintableShellStl(cutEntities, drawer, settings) {
+      const thickness = Math.max(3, Number(settings.thickness) || 18);
+      const wall = Math.max(0.8, Number(settings.wall) || 2);
+      const pitch = Math.min(1.5, Math.max(0.75, Number(settings.pitch) || 1.5));
+      if (wall >= thickness) throw new Error("Wall / skin thickness must be smaller than board thickness.");
+      const skinBottom = Math.max(0, thickness - wall);
+
+      // Face mesh sizing: boundary loop edges must stay short relative to their
+      // clearances so the Delaunay face mesher keeps them (see delaunayFaceMesh).
+      const faceMeshSize = Math.max(8, Math.min(18, Math.max(drawer.w, drawer.h) / 40));
+      const loopStep = Math.min(faceMeshSize, Math.max(1.2, wall * 1.6));
+
+      // Exact cutout loops (open, counter-clockwise) drive the visible walls and faces.
+      const cuts = cutEntities
+        .map(ent => simplifyClosedLoop(toOpenLoop(ent.points), 0.05))
+        .filter(loop => loop.length >= 3 && Math.abs(signedArea2(loop)) / 2 > 1)
+        .map(loop => (signedArea2(loop) > 0 ? loop : loop.slice().reverse()))
+        .map(loop => densifyLoop(loop, loopStep));
+
+      // Coarser copies with bounding boxes keep the cavity distance field cheap.
+      const maskCuts = cuts.map(loop => {
+        const coarse = simplifyClosedLoop(loop, pitch * 0.15);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        coarse.forEach(p => {
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y);
+          maxY = Math.max(maxY, p.y);
+        });
+        return { loop: coarse, closed: coarse.concat([coarse[0]]), minX, minY, maxX, maxY };
+      });
+
+      const cols = Math.ceil(drawer.w / pitch);
+      const rows = Math.ceil(drawer.h / pitch);
+      const cellCount = cols * rows;
+      if (cellCount > 400000) {
+        throw new Error(`Internal cavity grid would use ${cellCount.toLocaleString()} cells. Increase STL cavity detail mm.`);
+      }
+      // The traced cavity boundary can deviate by up to half a cell, so pad the band to keep walls at full thickness.
+      const band = wall + pitch * 0.6;
+      const cavityMask = new Uint8Array(cellCount);
+      for (let r = 0; r < rows; r++) {
+        const py = (r + 0.5) * pitch;
+        if (py <= band || py >= drawer.h - band) continue;
+        for (let c = 0; c < cols; c++) {
+          const px = (c + 0.5) * pitch;
+          if (px <= band || px >= drawer.w - band) continue;
+          const p = { x: px, y: py };
+          let carve = true;
+          for (const cut of maskCuts) {
+            if (px < cut.minX - band || px > cut.maxX + band || py < cut.minY - band || py > cut.maxY + band) continue;
+            if (pointInPolygon(p, cut.loop) || distanceToPolygonSegments(p, cut.closed) <= band) {
+              carve = false;
+              break;
+            }
+          }
+          if (carve) cavityMask[r * cols + c] = 1;
+        }
+      }
+
+      const minLoopArea = Math.pow(pitch * 2, 2);
+      const cavityLoops = traceMaskLoops(cavityMask, cols, rows)
+        .map(loop => loop.map(p => ({ x: p.x * pitch, y: p.y * pitch })))
+        .map(loop => {
+          const closed = loop.concat([{ ...loop[0] }]);
+          const resampled = resampleClosed(closed, pitch * 0.7);
+          const smoothed = gaussianSmooth(resampled, pitch * 0.9, pitch * 0.7);
+          return simplifyClosedLoop(smoothed.slice(0, -1), 0.08);
+        })
+        .filter(loop => loop.length >= 3 &&
+          (Math.abs(signedArea2(loop)) / 2 > minLoopArea || cuts.some(cut => pointInPolygon(cut[0], loop))))
+        .map(loop => (signedArea2(loop) > 0 ? loop : loop.slice().reverse()))
+        .map(loop => densifyLoop(loop, loopStep));
+
+      // Containment tree over rect + cuts + cavity loops: material flips at every boundary.
+      const rectLoop = densifyLoop(
+        [{ x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h }, { x: 0, y: drawer.h }],
+        Math.min(faceMeshSize, band * 1.8)
+      );
+      const nodes = [
+        { loop: rectLoop, kind: "rect", area: Math.abs(signedArea2(rectLoop)) / 2, children: [], depth: 0 },
+        ...cuts.map(loop => ({ loop, kind: "cut", area: Math.abs(signedArea2(loop)) / 2, children: [], depth: -1 })),
+        ...cavityLoops.map(loop => ({ loop, kind: "cavity", area: Math.abs(signedArea2(loop)) / 2, children: [], depth: -1 }))
+      ];
+      nodes.slice(1).forEach(node => {
+        let parent = nodes[0];
+        for (const other of nodes) {
+          if (other === node || other === nodes[0]) continue;
+          if (other.area <= node.area || other.area >= parent.area) continue;
+          if (pointInPolygon(node.loop[0], other.loop)) parent = other;
+        }
+        parent.children.push(node);
+      });
+      const queue = [nodes[0]];
+      while (queue.length) {
+        const n = queue.shift();
+        n.children.forEach(ch => {
+          ch.depth = n.depth + 1;
+          queue.push(ch);
+        });
+      }
+
+      const triangles = [];
+      const pushFace = (tris, z, flip) => {
+        tris.forEach(([a, b, c]) => {
+          const A = { x: a.x, y: a.y, z }, B = { x: b.x, y: b.y, z }, C = { x: c.x, y: c.y, z };
+          triangles.push(flip ? [A, C, B] : [A, B, C]);
+        });
+      };
+      const addWalls = (loop, z0, z1, materialInside) => {
+        if (z1 - z0 < 0.001) return;
+        for (let i = 0; i < loop.length; i++) {
+          const a = loop[i], b = loop[(i + 1) % loop.length];
+          if (materialInside) {
+            addStlQuad(triangles, { x: a.x, y: a.y, z: z0 }, { x: b.x, y: b.y, z: z0 }, { x: b.x, y: b.y, z: z1 }, { x: a.x, y: a.y, z: z1 });
+          } else {
+            addStlQuad(triangles, { x: b.x, y: b.y, z: z0 }, { x: a.x, y: a.y, z: z0 }, { x: a.x, y: a.y, z: z1 }, { x: b.x, y: b.y, z: z1 });
+          }
+        }
+      };
+
+      // Delaunay face mesh with earcut + centroid subdivision as the safe fallback.
+      const meshFace = (outer, holes) => {
+        const dm = delaunayFaceMesh(outer, holes, faceMeshSize);
+        return dm || refineFaceTriangulation(triangulatePolygonWithHoles(outer, holes), faceMeshSize);
+      };
+      // Top skin with exact cutout holes.
+      pushFace(meshFace(rectLoop, cuts), thickness, false);
+      // Underside: every even-depth region carries material down to z=0.
+      nodes.forEach(node => {
+        if (node.depth % 2 !== 0) return;
+        pushFace(meshFace(node.loop, node.children.map(ch => ch.loop)), 0, true);
+      });
+      // Cavity ceilings sit at the bottom of the top skin.
+      nodes.forEach(node => {
+        if (node.kind !== "cavity" || node.depth % 2 !== 1) return;
+        pushFace(meshFace(node.loop, node.children.filter(ch => ch.kind === "cavity").map(ch => ch.loop)), skinBottom, true);
+      });
+      addWalls(rectLoop, 0, thickness, true);
+      cuts.forEach(loop => addWalls(loop, 0, thickness, false));
+      nodes.forEach(node => {
+        if (node.kind !== "cavity") return;
+        addWalls(node.loop, 0, skinBottom, node.depth % 2 === 0);
+      });
+
+      const name = safeFileBase(cleanProjectName()) || "shadow_board";
+      const content = makeBinaryStl(triangles, `${name}_hollow_shell`);
+      return { content, cells: cellCount, facets: (content.byteLength - 84) / 50, pitch, thickness, wall };
+    }
+
     function buildLayoutExportData() {
       if (!state.items.length) {
         return { error: "No layout items to export. Add at least one accepted tool to the drawer first." };
@@ -3310,6 +4130,32 @@
         return;
       }
       showExportPreview(data);
+    }
+
+    async function exportPrintableStl() {
+      const data = buildLayoutExportData();
+      if (data.error) {
+        showNotice(data.error.replace("drawer DXF export", "3D STL export"));
+        return;
+      }
+      const settings = {
+        thickness: Number(el.stlThicknessInput.value),
+        wall: Number(el.stlWallInput.value),
+        pitch: Number(el.stlResolutionInput.value)
+      };
+      showBusy("Building 3D printable STL...", "Generating hollow-bottom shell mesh.", 12);
+      await nextFrame();
+      try {
+        const stl = makePrintableShellStl(data.ents, data.drawer, settings);
+        updateBusy("Building 3D printable STL...", `${stl.cells.toLocaleString()} cells, ${stl.facets.toLocaleString()} facets.`, 86);
+        await nextFrame();
+        download(`${safeFileBase(cleanProjectName())}_hollow_shell.stl`, stl.content, "model/stl");
+        showNotice(`Success: exported hollow STL with exact cutout contours and ${stl.wall} mm walls/skin.`);
+      } catch (err) {
+        showNotice("STL export blocked: " + err.message);
+      } finally {
+        hideBusy();
+      }
     }
 
     function validateLayout() {
@@ -3613,6 +4459,7 @@
     el.zoomOut.addEventListener("click", () => zoomView(0.82));
     el.zoomIn.addEventListener("click", () => zoomView(1.22));
     el.downloadLayout.addEventListener("click", exportLayout);
+    el.downloadStl.addEventListener("click", exportPrintableStl);
     el.downloadSelected.addEventListener("click", exportSelected);
     el.autoArrange.addEventListener("click", () => autoArrangeAll());
     el.duplicateSelected.addEventListener("click", () => {
@@ -3669,7 +4516,7 @@
       drawLayout();
     });
 
-    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput, el.arrangeTimeInput].forEach(input => {
+    [el.offsetInput, el.spacingInput, el.smoothInput, el.arrangeSpacingInput, el.arrangeTimeInput, el.stlThicknessInput, el.stlWallInput, el.stlResolutionInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();
         scheduleAutosave();

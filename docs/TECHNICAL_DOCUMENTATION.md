@@ -141,6 +141,24 @@ Selected tool export:
 
 The drawer export modal also offers `Download SVG`, generating a millimeter-true `<svg>` (`viewBox="0 0 drawerW drawerH"`, `width`/`height` in `mm`) with one `<path>` per tool cutout plus a drawer boundary rectangle. This targets laser-cutter software (Lightburn, xTool Creative Space, etc.) that consumes SVG rather than DXF.
 
+## Experimental 3D Printable STL Export
+
+The `Export 3D STL` workflow generates an experimental printable shell for testing printed drawer inserts.
+
+The STL export uses the same arranged drawer geometry as the full DXF export:
+
+- The drawer rectangle becomes the printable board footprint.
+- Each arranged tool contour, including merged finger-pull geometry, becomes a through-opening.
+- The board is extruded by `Board thickness mm`.
+- `Wall / skin mm` defaults to `2 mm`.
+- The outside perimeter and every tool-opening wall extend to the bottom of the model.
+- Tool openings and the board perimeter are meshed as exact polygon extrusions: the arranged contours become smooth vertical walls, so opening quality no longer depends on a grid resolution.
+- Flat faces (top skin, underside, cavity ceiling) are meshed with a Delaunay triangulation over the exact contour vertices plus an interior point grid, producing small well-shaped triangles that shade cleanly in smooth-shading STL viewers. An ear-clipping triangulator with centroid subdivision is the automatic fallback for degenerate clearances.
+- Areas away from perimeters and openings are shelled from the underside, leaving only the configured top skin thickness. Only this hidden internal cavity is computed on a grid: its outline is traced with marching squares and smoothed, so `STL cavity detail mm` only affects the invisible underside pocket.
+- Binary STL output includes computed facet normals for cleaner shading in slicers and viewers.
+
+This export is intentionally separate from the laser/DXF workflow. It is a first practical printable shell, not a final CAD boolean model. Always inspect the STL in the slicer before printing, especially around narrow tool gaps and small finger-pull features.
+
 ## Known Limitations
 
 - Very shiny metal can still confuse segmentation if it reflects white paper strongly.
@@ -149,6 +167,7 @@ The drawer export modal also offers `Download SVG`, generating a millimeter-true
 - The app exports polylines rather than true spline/arc geometry.
 - Paper detection crops to a bounding box only; it does not perspective-correct an angled photo, so a photo not taken roughly square-on to the paper will produce a dimensionally distorted contour.
 - The nesting search uses a raster approximation of the no-fit polygon (see Nesting), not exact Minkowski-sum boundaries, so extremely thin concave openings may be missed at the default 3&nbsp;mm raster resolution.
+- In the experimental STL export, only the hidden underside cavity outline is grid-traced (at the selected cavity detail) and deliberately conservative, which can leave internal walls marginally thicker than configured. Tool openings themselves follow the exact arranged contours.
 - Browser `file://` security can block automated browser testing, but normal manual use is supported by opening the HTML file directly.
 - Browser save storage has a size limit. For large projects, use `Export Project` to save a portable JSON file.
 
