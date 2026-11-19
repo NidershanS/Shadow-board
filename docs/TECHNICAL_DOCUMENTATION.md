@@ -1,69 +1,70 @@
-# Shadow Board DXF Maker - Technical Documentation
+# SnapInset — technical documentation
+
+Tagline: Snap your tools. Print the fit.
 
 ## Purpose
 
-Shadow Board DXF Maker converts photos of tools placed on A3 or A4 paper into laser-cut DXF outlines for drawer shadow boards. The workflow is designed for a browser-only setup: upload photos, detect the paper and tool, preview the contour, arrange tools on a drawer-sized board, place finger-pull handles, then export DXF.
+SnapInset converts photos of tools on A4, A3, or US Letter paper into a drawer shadow board. The same layout exports a 3D-printable hollow shell (STL, or a zip of bed-sized tiles) and a laser-cut DXF or SVG. The app is one vanilla HTML file, `outputs/index.html`, with no build step and no framework. Export functions stay in that file so they can later move behind a server function without a rewrite.
 
 ## Main Files
 
-- `outputs/index.html`: self-contained browser application.
-- `outputs/shadow_board_from_a4.py`: reference Python command-line processing script used during prototyping.
-- `README.md`: short user-facing project overview.
-- `.gitignore`: excludes generated previews and test outputs from Git.
-
-## Hosted App
-
-The current Vercel-hosted app is available at:
-
-https://shadow-board-qlwk.vercel.app/
-
-The app can also run locally by opening `outputs/index.html` directly in a browser.
+- `outputs/index.html`: the application.
+- `outputs/shadow_board_from_a4.py`: the earlier Python prototype. The browser pipeline has moved past it.
+- `README.md`: short user overview.
 
 ## User Workflow
 
-1. Photograph a tool on a white A3 or A4 sheet.
-2. Drop one or more photos onto the page, or use `Choose Files`. Detection starts automatically once files are selected or dropped; `Detect Contours` remains available to re-run manually.
-3. Select paper size: A4 or A3. The app supports portrait and landscape photos.
-4. The app detects the paper, segments the tool, smooths the outline, and applies the cut offset.
-5. Preview each detected tool contour in the review modal. Rename the tool, and tune `Offset mm`, `Gap repair mm`, and `Smooth mm` directly in the modal — changing a value automatically re-detects the contour after a short pause.
-6. Accept the contour. Accepting adds the tool straight to the drawer at a non-overlapping position; the modal auto-advances to the next unreviewed contour.
-7. Drag/rotate tools into position, or use `Arrange Now` to auto-nest everything (see Nesting below).
-8. Move the blue finger-pull handles; dragging a tool over another highlights the overlap in red.
-9. Export the full drawer as DXF or SVG, or export the selected tool alone as DXF.
+1. Photograph tools on a whole sheet. All four corners must be in frame. Several tools can share one photo if they do not touch.
+2. Drop the photo, or use Choose photos. A phone can use the camera input. Detection starts on its own.
+3. Choose the paper size: A4, A3, or US Letter. Portrait and landscape both work.
+4. The app finds the paper corners, rectifies the sheet, and segments every tool on it.
+5. Review each outline. Offset, gap repair, and smoothing live in the review dialog under advanced settings, and a change reprocesses that tool.
+6. If the sheet is not found, place the four corners by hand. There is no silent fallback to an arbitrary scale.
+7. Accept adds the tool to the drawer.
+8. Drag, nudge, or Auto-arrange. Overlaps are hatched. Ctrl+Z / Ctrl+Shift+Z undo and redo layout edits (50 steps).
+9. Export STL, or Export tiles. Switch to Laser cut for DXF and SVG.
+
+The stepper (Capture, Review, Arrange, Export) is a set of buttons. Capture and Arrange switch views. Review opens the current outline. Export scrolls to the drawer card.
 
 ## Project Persistence
 
-The app stores the latest project in browser `localStorage` so a refresh can restore the detected tools, drawer layout, finger-pull positions, previews, and settings.
+The app stores the latest project in `localStorage` under `shadowBoardDxfMaker.project.v1`, so a browser that already had a project from the previous app still restores it.
 
-Manual project controls:
+- Autosave writes that key. There is no separate Save button.
+- Export project downloads a portable JSON file. New files set `app` to `SnapInset` and `version` to `2`.
+- Import project, or dropping a `.json` file, loads it. The loader does not reject a file because of the `app` name. Fields added later (pocket depth, scale confidence, paper corners, bed size) are optional.
+- New project clears the browser save after a confirm.
 
-- `Project name`: stores a human-friendly project name and controls exported project/DXF filenames.
-- `Save Project`: writes the current project to this browser.
-- `Load Saved`: reloads the browser-saved project.
-- `New Project / Clear Saved`: removes the browser-saved project and resets the current workspace.
-- `Export Project`: downloads a portable `shadow_board_project.json`.
-- `Import Project`: loads a previously exported project JSON on the same or another PC.
-
-The project JSON stores detected contours and preview images, not the original uploaded photos. This keeps the app usable after refresh without requiring access to the original image files.
-
-Browser save and exported project files are separate. Clearing the saved browser project does not delete any `.json` project file already downloaded to the PC.
+The JSON stores contours and preview images, not the original photos.
 
 ## Measurement Model
 
-The app uses the detected paper rectangle as the scale reference.
+Scale comes from the paper, after a perspective rectification, not from a stretched bounding box.
 
-- A4: `210 x 297 mm`
-- A3: `297 x 420 mm`
-- Portrait or landscape orientation is inferred from the detected paper aspect.
-- Internal processing uses `PROC_PX_PER_MM = 3`, meaning 3 raster-processing pixels per millimeter.
+- A4: 210 × 297 mm
+- A3: 297 × 420 mm
+- US Letter: 215.9 × 279.4 mm
+- `PROC_PX_PER_MM` is 5. The rectified sheet is `paper millimetres × 5` pixels on a side.
 
-The DXF output is in millimeters.
+### Paper corners and homography
+
+`findPaperCorners` builds a bright, low-saturation mask, keeps the largest component, and takes the four sharpest hull corners. Each edge is refit to the mask boundary and pushed outward by 1.7 detection pixels, because the threshold sits inside the true edge of the sheet. A homography (similarity-normalized, solved by Gaussian elimination) warps the quad onto the known paper size with bilinear sampling. Pixels outside the quad are white so the table is not traced as a tool.
+
+Confidence is an integer from 1 to 99, shown on the tool card. It drops when the quad is skewed, the corners are soft, or the sheet fills the frame oddly.
+
+If no sheet is found, or the corners are cut off, detection stops and the message is: "No paper sheet found. Include the whole sheet, with all four corners visible, or place the corners yourself." The corner editor is the manual fallback. Applying those four points runs the same warp.
+
+### Several tools, and the paper edge
+
+`segmentTools` keeps every component of at least 150 mm², up to eight. A hard shadow is not walked into: the mask grows through a brightness ramp but stops when a pixel is more than 12 levels darker than the seed, which is what a cast shadow looks like. Components whose bounding box is within 12 mm of the sheet edge are kept and flagged. They used to be discarded. The card shows "near edge" because that side of the outline can be clipped by the sheet.
+
+The default 2 mm offset is pocket clearance for the cut, not a scale correction. Scale checks use offset 0.
 
 ## Image Processing Pipeline
 
 ### 1. Paper Detection
 
-The app looks for the large bright white paper region in the uploaded photo. It crops and rectifies the image area around that sheet before tool segmentation. This helps ignore drawer edges, dark table areas, and extra background outside the page.
+See Measurement Model. The sheet is a rectified quad, not an axis-aligned crop. A photo with no paper does not produce a board.
 
 ### 2. Background Correction
 
@@ -141,35 +142,70 @@ Selected tool export:
 
 The drawer export modal also offers `Download SVG`, generating a millimeter-true `<svg>` (`viewBox="0 0 drawerW drawerH"`, `width`/`height` in `mm`) with one `<path>` per tool cutout plus a drawer boundary rectangle. This targets laser-cutter software (Lightburn, xTool Creative Space, etc.) that consumes SVG rather than DXF.
 
-## Experimental 3D Printable STL Export
+## Printable STL
 
-The `Export 3D STL` workflow generates an experimental printable shell for testing printed drawer inserts.
+Export STL builds a hollow shell from the same arranged contours as the DXF. It is a normal output, not an experiment.
 
-The STL export uses the same arranged drawer geometry as the full DXF export:
+Print orientation:
 
-- The drawer rectangle becomes the printable board footprint.
-- Each arranged tool contour, including merged finger-pull geometry, becomes a through-opening.
-- The board is extruded by `Board thickness mm`.
-- `Wall / skin mm` defaults to `2 mm`.
-- The outside perimeter and every tool-opening wall extend to the bottom of the model.
-- Tool openings and the board perimeter are meshed as exact polygon extrusions: the arranged contours become smooth vertical walls, so opening quality no longer depends on a grid resolution.
-- Flat faces (top skin, underside, cavity ceiling) are meshed with a Delaunay triangulation over the exact contour vertices plus an interior point grid, producing small well-shaped triangles that shade cleanly in smooth-shading STL viewers. An ear-clipping triangulator with centroid subdivision is the automatic fallback for degenerate clearances.
-- Areas away from perimeters and openings are shelled from the underside, leaving only the configured top skin thickness. Only this hidden internal cavity is computed on a grid: its outline is traced with marching squares and smoothed, so `STL cavity detail mm` only affects the invisible underside pocket.
-- Binary STL output includes computed facet normals for cleaner shading in slicers and viewers.
+- The solid skin is the face at z = 0, so it sits on the bed. The outline is a closed face with no through-holes.
+- The outer wall rises from a 0.3 mm, 45° chamfer to the board thickness. The chamfer is an inset of the outline, so the first layer is slightly smaller than the finished footprint.
+- Each pocket has a floor at `thickness − depth`. The default depth is 15 mm, editable per tool, and stored on the layout item. The floor is never thinner than the skin.
+- The cavity is the region more than a rim-band away from the outside and from the pockets. It is open at the top. Nothing bridges.
+- Material islands inside a pocket get walls from the surrounding floor up to the top.
 
-This export is intentionally separate from the laser/DXF workflow. It is a first practical printable shell, not a final CAD boolean model. Always inspect the STL in the slicer before printing, especially around narrow tool gaps and small finger-pull features.
+`STL cavity detail mm` is the grid pitch for that cavity only. Walls and pocket floors follow the polygons. If the grid would exceed 350,000 cells, the pitch widens by 1.25× until it fits or it reaches 12 mm, and the toast says so. A 1200 × 800 mm board exports this way instead of failing.
+
+Filament mass is the signed mesh volume in mm³, divided by 1000, times 1.24 g/cm³. The export notice and the readout after export use that mesh mass and call it an estimate. The live readout before export is an analytical stand-in (block, minus pocket voids, minus the cavity) and will not match the mesh to the gram.
+
+`buildShellStl` runs `makePrintableShellStl` in a Web Worker created from a Blob URL. The worker is the function source plus the helpers it calls. On a worker error or a 120 second timeout the same function runs on the main thread. The mass readout's `data-threaded` attribute is `1` when the worker produced the file.
+
+Laser DXF and SVG are unchanged: the DXF is Y-up, the SVG is millimeter-true, and both still go through the export preview.
+
+## Bed tiles
+
+Export tiles splits the board when it is larger than the printer. The zip contains one STL per tile, `clearance-coupon.stl`, and `tiles.txt`.
+
+Beds, with an editable margin that defaults to 3 mm per side:
+
+| Preset | Bed (mm) |
+| --- | --- |
+| Bambu A1 mini | 180 × 180 |
+| Bambu A1 / P1S / X1C | 256 × 256 |
+| Bambu H2D | 325 × 320 |
+| Prusa MK4S | 250 × 210 |
+| Prusa CORE One | 250 × 220 |
+| Ender-3 V3 | 220 × 220 |
+| Custom | typed width and depth |
+
+Usable length is the bed minus two margins. A tile body is capped at 200 mm, and also at usable length minus 8 mm, so the dovetail key that sticks past the body still lands inside the usable area. The socket is a notch, so it does not grow the footprint.
+
+Seam positions come from a dynamic program. Candidates are stepped every 2 mm (4 mm on a long board). The cost of a cut is the millimetres of pocket the cut line crosses. The search picks the cuts that keep every span under the cap and minimise that cost. `tiles.txt` also reports the cost of an even split with the same number of tiles.
+
+Joints are dovetail keys extruded in Z, built as polygons on the tile outline rather than as voxels. Neck 8 mm, head 12 mm, depth 8 mm. Clearance defaults to 0.25 mm per side and can be set from 0.20 to 0.30. Keys sit on the high side of each seam (the tile toward the origin carries the key; the next tile carries the socket). A key is placed only in a stretch of seam that stays at least 20 mm clear of every pocket. A seam with no such stretch is a butt joint.
+
+The seam wall is 10 mm, not 5 mm. An 8 mm socket in a 5 mm wall would open into the cavity. The extra 2 mm past the key depth keeps the socket in solid plastic. The skin stays at the wall setting, usually 2 mm. Pockets that cross a seam are clipped 0.2 mm inside the tile so the cut does not share an edge with the outline.
+
+The bottom edge has the same 0.3 mm chamfer as a one-piece board. Tile numbers are raised 0.6 mm on the cavity floor, as a single polygon per character, when a clear spot exists in the largest cavity. The filename carries the label (A1, B1, …) either way.
+
+The clearance coupon is two small shells in one STL: a key and a matching socket at the chosen clearance, separated so they can be broken apart and pressed together before printing the set.
+
+The zip is STORE method (no compression), written in the page. There is no multi-plate 3MF export.
 
 ## Known Limitations
 
-- Very shiny metal can still confuse segmentation if it reflects white paper strongly.
-- Strong shadows touching the tool can become part of the contour.
-- Finger-pull circles should overlap the main tool outline; fully separate circles are not intended.
-- The app exports polylines rather than true spline/arc geometry.
-- Paper detection crops to a bounding box only; it does not perspective-correct an angled photo, so a photo not taken roughly square-on to the paper will produce a dimensionally distorted contour.
-- The nesting search uses a raster approximation of the no-fit polygon (see Nesting), not exact Minkowski-sum boundaries, so extremely thin concave openings may be missed at the default 3&nbsp;mm raster resolution.
-- In the experimental STL export, only the hidden underside cavity outline is grid-traced (at the selected cavity detail) and deliberately conservative, which can leave internal walls marginally thicker than configured. Tool openings themselves follow the exact arranged contours.
-- Browser `file://` security can block automated browser testing, but normal manual use is supported by opening the HTML file directly.
-- Browser save storage has a size limit. For large projects, use `Export Project` to save a portable JSON file.
+- Very shiny metal can still break a contour where it reflects the paper.
+- A shadow that is attached to the tool and only slightly darker can still be included. A hard cast shadow is excluded.
+- A tool within about 12 mm of the sheet edge is measured, and warned, rather than dropped. That side can read a couple of millimetres large.
+- Finger-pull circles should overlap the main outline.
+- DXF and SVG are polylines, not splines.
+- Nesting uses a raster no-fit proposal (see Nesting). Thin concavities can be missed at the 3 mm raster.
+- The cavity wall is only as accurate as the cavity grid. Pocket walls follow the polygons.
+- Two label holes that share one horizontal line make this ear-clipper drop an edge. Characters are staggered by 0.45 mm so that does not happen. If a label still will not close, that tile is exported without the number.
+- A seam with no 20 mm of clear plastic has no dovetail.
+- The seam wall is 10 mm so the key stays in solid. It is not the 5 mm wall drawn in the early joint sketch.
+- 3MF multi-plate export is not implemented.
+- Browser save storage is limited. Export the project JSON for a large board.
 
 ## Recommended Photo Setup
 
@@ -181,7 +217,7 @@ This export is intentionally separate from the laser/DXF workflow. It is a first
 
 ## Nesting
 
-`Arrange Now` runs a multi-strategy nesting search over saved project geometry (`autoArrangeAll`):
+Auto-arrange runs a multi-strategy nesting search over saved project geometry (`autoArrangeAll`):
 
 - Reads all layout-item contours in millimeters, using the exact polygon (not just the bounding box) for collision checks.
 - Includes finger-pull circles in the layout footprint, in collision checks, and in spacing checks alongside the tool contour.
@@ -207,7 +243,7 @@ This is not a full Minkowski-difference NFP implementation (no true polygon-boun
 
 - Manual drag/rotate cleanup remains available after automatic placement; dragging a tool over another paints the overlapping contour red immediately (`updateDragOverlap`, exact polygon-distance check against every other placed item).
 - Zoom (buttons or mouse wheel toward the cursor) and pan (drag on empty canvas) let you inspect the drawer without changing its dimensions; `Fit View` recenters with a clean top-left margin.
-- The export report panel and the `Arrange Now` busy overlay both surface the same validation used to gate DXF/SVG export, so overlap or out-of-bounds issues are visible before an export attempt.
+- The export report panel and the Auto-arrange busy overlay both surface the same validation used to gate DXF/SVG export, so overlap or out-of-bounds issues are visible before an export attempt.
 
 ### Possible future improvements
 
