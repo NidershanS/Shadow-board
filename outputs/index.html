@@ -366,6 +366,7 @@
                 <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
               </div>
               <label>STL cavity detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="4" step="0.25"></label>
+              <p class="note">The solid skin prints on the bed and each pocket keeps a floor. A large board coarsens the cavity grid on its own.</p>
               <div class="grid2">
                 <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
                 <label>Arrange time limit sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
@@ -380,6 +381,7 @@
           <summary>Selected tool</summary>
           <div class="stack">
             <label>Rotation deg<input id="rotInput" type="number" value="0" step="1"></label>
+            <label>Pocket depth mm<input id="pocketDepthInput" type="number" value="15" min="1" max="80" step="0.5" aria-label="Pocket depth in millimetres"></label>
             <div class="grid2">
               <button id="rotateLeft" class="btn" type="button" aria-label="Rotate counterclockwise 15 degrees">−15°</button>
               <button id="rotateRight" class="btn" type="button" aria-label="Rotate clockwise 15 degrees">+15°</button>
@@ -572,6 +574,7 @@
       importProject: document.getElementById("importProject"),
       importProjectInput: document.getElementById("importProjectInput"),
       rotInput: document.getElementById("rotInput"),
+      pocketDepthInput: document.getElementById("pocketDepthInput"),
       autoArrange: document.getElementById("autoArrange"),
       downloadLayout: document.getElementById("downloadLayout"),
       downloadSelected: document.getElementById("downloadSelected"),
@@ -703,7 +706,8 @@
         y: item.y,
         rot: item.rot,
         locked: !!item.locked,
-        pulls: clonePulls(itemPulls(item))
+        pulls: clonePulls(itemPulls(item)),
+        pocketDepth: Number(item.pocketDepth) || 15
       }));
     }
 
@@ -716,7 +720,8 @@
         y: Number(item.y) || 0,
         rot: Number(item.rot) || 0,
         locked: !!item.locked,
-        pulls: clonePulls(item.pulls || [])
+        pulls: clonePulls(item.pulls || []),
+        pocketDepth: Number(item.pocketDepth) || 15
       })).filter(item => toolIds.has(item.toolId));
       state.selectedId = state.items[0]?.id || null;
       invalidateContourCache();
@@ -852,7 +857,8 @@
           edgeWarning: !!tool.edgeWarning,
           manualScale: !!tool.manualScale,
           corners: Array.isArray(tool.corners) ? tool.corners.map(p => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 })) : null,
-          pageBox: tool.pageBox && Number.isFinite(tool.pageBox.w) ? tool.pageBox : null
+          pageBox: tool.pageBox && Number.isFinite(tool.pageBox.w) ? tool.pageBox : null,
+          pocketDepth: Number(tool.pocketDepth) || 15
         })),
         items: state.items.map(item => ({
           id: item.id,
@@ -861,7 +867,8 @@
           y: item.y,
           rot: item.rot,
           locked: !!item.locked,
-          pulls: clonePulls(itemPulls(item))
+          pulls: clonePulls(itemPulls(item)),
+          pocketDepth: Number(item.pocketDepth) || Number(getTool(item.toolId)?.pocketDepth) || 15
         })),
         selectedId: state.selectedId
       };
@@ -885,7 +892,7 @@
       el.fingerInput.value = settings.finger ?? 14;
       el.stlThicknessInput.value = settings.stlThickness ?? 18;
       el.stlWallInput.value = settings.stlWall ?? 2;
-      el.stlResolutionInput.value = Math.min(1.5, Math.max(0.75, Number(settings.stlResolution ?? 1.5)));
+      el.stlResolutionInput.value = Math.min(4, Math.max(0.75, Number(settings.stlResolution ?? 1.5)));
       state.files = [];
       state.pendingFiles = [];
       state.tools = project.tools.map(tool => ({
@@ -900,6 +907,7 @@
         defaultPulls: clonePulls(tool.defaultPulls || []),
         preview: tool.preview || "",
         previewLarge: tool.previewLarge || tool.preview || "",
+        pocketDepth: Number(tool.pocketDepth) || 15,
         scaleConfidence: Number.isFinite(tool.scaleConfidence) ? Number(tool.scaleConfidence) : null,
         edgeWarning: !!tool.edgeWarning,
         manualScale: !!tool.manualScale,
@@ -919,7 +927,8 @@
         y: Number(item.y) || 0,
         rot: Number(item.rot) || 0,
         locked: !!item.locked,
-        pulls: clonePulls(item.pulls || [])
+        pulls: clonePulls(item.pulls || []),
+        pocketDepth: Number(item.pocketDepth) || 15
       })).filter(item => toolIds.has(item.toolId));
       state.selectedId = state.items.some(item => item.id === project.selectedId) ? project.selectedId : (state.items[0]?.id || null);
       state.drag = null;
@@ -2322,8 +2331,9 @@
           edgeWarning: part.edgeWarning,
           corners: page.corners.map(p => ({ x: p.x, y: p.y })),
           pageBox: maskBBoxMm(part.mask, part.w, part.h),
-          manualScale: !!page.manual
-        });
+      manualScale: !!page.manual,
+      pocketDepth: 15
+    });
       }
       if (!tools.length) {
         const err = new Error("The sheet was found, but no tool outline was detected. Use a darker tool on plain paper, and keep it off the edge.");
@@ -2417,7 +2427,8 @@
         y: 20 + index * 12,
         rot: 0,
         locked: false,
-        pulls: clonePulls(tool.defaultPulls)
+        pulls: clonePulls(tool.defaultPulls),
+        pocketDepth: Number(tool.pocketDepth) || 15
       };
     }
 
@@ -3718,6 +3729,11 @@
       drawLayout();
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
+      if (el.pocketDepthInput) {
+        const tool = sel ? getTool(sel.toolId) : null;
+        el.pocketDepthInput.value = String(Number(sel?.pocketDepth || tool?.pocketDepth) || 15);
+        el.pocketDepthInput.disabled = !sel;
+      }
       el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
       el.downloadLayout.disabled = !state.items.length;
       el.downloadStl.disabled = !state.items.length;
@@ -3734,6 +3750,11 @@
       });
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
+      if (el.pocketDepthInput) {
+        const tool = sel ? getTool(sel.toolId) : null;
+        el.pocketDepthInput.value = String(Number(sel?.pocketDepth || tool?.pocketDepth) || 15);
+        el.pocketDepthInput.disabled = !sel;
+      }
       el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
       drawLayout();
     }
@@ -4492,28 +4513,44 @@
       return loops;
     }
 
+    function meshVolumeMm3(triangles) {
+      let vol = 0;
+      for (let i = 0; i < triangles.length; i++) {
+        const a = triangles[i][0], b = triangles[i][1], c = triangles[i][2];
+        vol += a.x * (b.y * c.z - b.z * c.y) + b.x * (c.y * a.z - c.z * a.y) + c.x * (a.y * b.z - a.z * b.y);
+      }
+      return Math.abs(vol) / 6;
+    }
+
     function makePrintableShellStl(cutEntities, drawer, settings) {
       const thickness = Math.max(3, Number(settings.thickness) || 18);
-      const wall = Math.max(0.8, Number(settings.wall) || 2);
-      const pitch = Math.min(1.5, Math.max(0.75, Number(settings.pitch) || 1.5));
-      if (wall >= thickness) throw new Error("Wall / skin thickness must be smaller than board thickness.");
-      const skinBottom = Math.max(0, thickness - wall);
+      const skin = Math.max(0.8, Number(settings.wall) || 2);
+      if (skin >= thickness - 0.4) throw new Error("Wall / skin thickness must be smaller than board thickness.");
+      const requestedPitch = Math.min(4, Math.max(0.75, Number(settings.pitch) || 1.5));
+      let pitch = requestedPitch;
+      let cols = Math.ceil(drawer.w / pitch);
+      let rows = Math.ceil(drawer.h / pitch);
+      while (cols * rows > 350000 && pitch < 12) {
+        pitch = Math.min(12, pitch * 1.25);
+        cols = Math.ceil(drawer.w / pitch);
+        rows = Math.ceil(drawer.h / pitch);
+      }
 
-      // Face mesh sizing: boundary loop edges must stay short relative to their
-      // clearances so the Delaunay face mesher keeps them (see delaunayFaceMesh).
       const faceMeshSize = Math.max(8, Math.min(18, Math.max(drawer.w, drawer.h) / 40));
-      const loopStep = Math.min(faceMeshSize, Math.max(1.2, wall * 1.6));
+      const loopStep = Math.min(faceMeshSize, Math.max(1.2, skin * 1.6));
 
-      // Exact cutout loops (open, counter-clockwise) drive the visible walls and faces.
-      const cuts = cutEntities
-        .map(ent => simplifyClosedLoop(toOpenLoop(ent.points), 0.05))
-        .filter(loop => loop.length >= 3 && Math.abs(signedArea2(loop)) / 2 > 1)
-        .map(loop => (signedArea2(loop) > 0 ? loop : loop.slice().reverse()))
-        .map(loop => densifyLoop(loop, loopStep));
+      const cuts = [];
+      (cutEntities || []).forEach(ent => {
+        const loop0 = simplifyClosedLoop(toOpenLoop(ent.points), 0.05);
+        if (loop0.length < 3 || Math.abs(signedArea2(loop0)) / 2 <= 1) return;
+        let loop = signedArea2(loop0) > 0 ? loop0 : loop0.slice().reverse();
+        loop = densifyLoop(loop, loopStep);
+        const depth = Math.min(thickness - skin, Math.max(0.4, Number(ent.depth) || 15));
+        cuts.push({ loop, floorZ: thickness - depth, depth });
+      });
 
-      // Coarser copies with bounding boxes keep the cavity distance field cheap.
-      const maskCuts = cuts.map(loop => {
-        const coarse = simplifyClosedLoop(loop, pitch * 0.15);
+      const maskCuts = cuts.map(cut => {
+        const coarse = simplifyClosedLoop(cut.loop, pitch * 0.15);
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         coarse.forEach(p => {
           minX = Math.min(minX, p.x);
@@ -4524,14 +4561,8 @@
         return { loop: coarse, closed: coarse.concat([coarse[0]]), minX, minY, maxX, maxY };
       });
 
-      const cols = Math.ceil(drawer.w / pitch);
-      const rows = Math.ceil(drawer.h / pitch);
       const cellCount = cols * rows;
-      if (cellCount > 400000) {
-        throw new Error(`Internal cavity grid would use ${cellCount.toLocaleString()} cells. Increase STL cavity detail mm.`);
-      }
-      // The traced cavity boundary can deviate by up to half a cell, so pad the band to keep walls at full thickness.
-      const band = wall + pitch * 0.6;
+      const band = skin + pitch * 0.6;
       const cavityMask = new Uint8Array(cellCount);
       for (let r = 0; r < rows; r++) {
         const py = (r + 0.5) * pitch;
@@ -4561,20 +4592,18 @@
           const smoothed = gaussianSmooth(resampled, pitch * 0.9, pitch * 0.7);
           return simplifyClosedLoop(smoothed.slice(0, -1), 0.08);
         })
-        .filter(loop => loop.length >= 3 &&
-          (Math.abs(signedArea2(loop)) / 2 > minLoopArea || cuts.some(cut => pointInPolygon(cut[0], loop))))
+        .filter(loop => loop.length >= 3 && Math.abs(signedArea2(loop)) / 2 > minLoopArea)
         .map(loop => (signedArea2(loop) > 0 ? loop : loop.slice().reverse()))
         .map(loop => densifyLoop(loop, loopStep));
 
-      // Containment tree over rect + cuts + cavity loops: material flips at every boundary.
       const rectLoop = densifyLoop(
         [{ x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h }, { x: 0, y: drawer.h }],
         Math.min(faceMeshSize, band * 1.8)
       );
       const nodes = [
-        { loop: rectLoop, kind: "rect", area: Math.abs(signedArea2(rectLoop)) / 2, children: [], depth: 0 },
-        ...cuts.map(loop => ({ loop, kind: "cut", area: Math.abs(signedArea2(loop)) / 2, children: [], depth: -1 })),
-        ...cavityLoops.map(loop => ({ loop, kind: "cavity", area: Math.abs(signedArea2(loop)) / 2, children: [], depth: -1 }))
+        { loop: rectLoop, kind: "rect", floorZ: 0, area: Math.abs(signedArea2(rectLoop)) / 2, children: [], depth: 0 },
+        ...cuts.map(cut => ({ loop: cut.loop, kind: "cut", floorZ: cut.floorZ, area: Math.abs(signedArea2(cut.loop)) / 2, children: [], depth: -1 })),
+        ...cavityLoops.map(loop => ({ loop, kind: "cavity", floorZ: skin, area: Math.abs(signedArea2(loop)) / 2, children: [], depth: -1 }))
       ];
       nodes.slice(1).forEach(node => {
         let parent = nodes[0];
@@ -4602,7 +4631,7 @@
         });
       };
       const addWalls = (loop, z0, z1, materialInside) => {
-        if (z1 - z0 < 0.001) return;
+        if (z1 - z0 < 0.05) return;
         for (let i = 0; i < loop.length; i++) {
           const a = loop[i], b = loop[(i + 1) % loop.length];
           if (materialInside) {
@@ -4612,34 +4641,47 @@
           }
         }
       };
-
-      // Delaunay face mesh with earcut + centroid subdivision as the safe fallback.
       const meshFace = (outer, holes) => {
         const dm = delaunayFaceMesh(outer, holes, faceMeshSize);
         return dm || refineFaceTriangulation(triangulatePolygonWithHoles(outer, holes), faceMeshSize);
       };
-      // Top skin with exact cutout holes.
-      pushFace(meshFace(rectLoop, cuts), thickness, false);
-      // Underside: every even-depth region carries material down to z=0.
-      nodes.forEach(node => {
-        if (node.depth % 2 !== 0) return;
-        pushFace(meshFace(node.loop, node.children.map(ch => ch.loop)), 0, true);
-      });
-      // Cavity ceilings sit at the bottom of the top skin.
-      nodes.forEach(node => {
-        if (node.kind !== "cavity" || node.depth % 2 !== 1) return;
-        pushFace(meshFace(node.loop, node.children.filter(ch => ch.kind === "cavity").map(ch => ch.loop)), skinBottom, true);
-      });
+
+      // Solid skin on the bed. Pockets and the hollow open upward, so nothing bridges.
+      pushFace(meshFace(rectLoop, []), 0, true);
       addWalls(rectLoop, 0, thickness, true);
-      cuts.forEach(loop => addWalls(loop, 0, thickness, false));
       nodes.forEach(node => {
-        if (node.kind !== "cavity") return;
-        addWalls(node.loop, 0, skinBottom, node.depth % 2 === 0);
+        const holes = node.children.map(ch => ch.loop);
+        if (node.depth % 2 === 0) {
+          pushFace(meshFace(node.loop, holes), thickness, false);
+        } else {
+          pushFace(meshFace(node.loop, holes), node.floorZ, false);
+          addWalls(node.loop, node.floorZ, thickness, false);
+        }
+      });
+      // Material islands (even depth, not the outer rectangle) need a wall down to the
+      // surrounding void floor. The search above is awkward; do it explicitly.
+      nodes.forEach(node => {
+        if (node.kind === "rect" || node.depth % 2 !== 0) return;
+        const parent = nodes.find(n => n.children.includes(node));
+        const z0 = parent ? parent.floorZ : skin;
+        addWalls(node.loop, z0, thickness, true);
       });
 
-      const name = safeFileBase(cleanProjectName()) || "snapinset";
-      const content = makeBinaryStl(triangles, `${name}_hollow_shell`);
-      return { content, cells: cellCount, facets: (content.byteLength - 84) / 50, pitch, thickness, wall };
+      const mm3 = meshVolumeMm3(triangles);
+      const grams = mm3 / 1000 * 1.24;
+      const name = String(settings.name || "snapinset");
+      const content = makeBinaryStl(triangles, name + "_shell");
+      return {
+        content,
+        cells: cellCount,
+        facets: (content.byteLength - 84) / 50,
+        pitch,
+        adaptedPitch: Math.abs(pitch - requestedPitch) > 0.01,
+        thickness,
+        wall: skin,
+        volume: mm3,
+        grams
+      };
     }
 
     function buildLayoutExportData() {
@@ -4658,7 +4700,8 @@
         const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0, 40);
         ents.push({
           layer,
-          points: combinedLocalPoints(item).map(p => transformPoint(p, item, tool))
+          points: combinedLocalPoints(item).map(p => transformPoint(p, item, tool)),
+          depth: Number(item.pocketDepth || tool.pocketDepth) || 15
         });
       });
       const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
@@ -4759,6 +4802,80 @@
       showExportPreview(data);
     }
 
+    function stlWorkerUrl() {
+      if (stlWorkerUrl.cached) return stlWorkerUrl.cached;
+      const fns = [
+        edgePoint, dist, closestPointOnSegment, pointSegmentDistance, resampleClosed, gaussianSmooth, signedArea2, toOpenLoop, rdpSimplify,
+        simplifyClosedLoop, distanceToPolygonSegments, pointInPolygon, addStlTriangle, addStlQuad,
+        facetNormal, makeBinaryStl, ecNode, ecInsertNode, ecRemoveNode, ecArea, ecEquals, ecSign,
+        ecOnSegment, ecIntersects, ecIntersectsPolygon, ecLocallyInside, ecMiddleInside, ecValidDiagonal,
+        ecSplitPolygon, ecFilterPoints, ecPointInTriangle, ecIsEar, ecCureLocalIntersections, ecSplitEarcut,
+        ecEarcutLinked, ecGetLeftmost, ecSectorContainsSector, ecFindHoleBridge, ecEliminateHole, ecLinkedList,
+        triangulatePolygonWithHoles, densifyLoop, delaunayFaceMesh, refineFaceTriangulation, traceMaskLoops,
+        meshVolumeMm3, makePrintableShellStl
+      ];
+      const src = [
+        "const SEGMENTS = " + JSON.stringify(SEGMENTS) + ";",
+        "let ecNodeSeq = 0;",
+        fns.map(fn => fn.toString()).join("\n"),
+        `self.onmessage = (ev) => {
+          try {
+            const stl = makePrintableShellStl(ev.data.cuts, ev.data.drawer, ev.data.settings);
+            stl.threaded = true;
+            self.postMessage({ ok: true, stl }, [stl.content]);
+          } catch (err) {
+            self.postMessage({ ok: false, error: err && err.message ? err.message : String(err) });
+          }
+        };`
+      ].join("\n");
+      stlWorkerUrl.cached = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+      return stlWorkerUrl.cached;
+    }
+
+    function buildShellStl(cuts, drawer, settings) {
+      return new Promise(resolve => {
+        let worker;
+        try {
+          worker = new Worker(stlWorkerUrl());
+        } catch (err) {
+          console.warn("STL worker failed to start", err && err.message ? err.message : err);
+          const stl = makePrintableShellStl(cuts, drawer, settings);
+          stl.threaded = false;
+          resolve(stl);
+          return;
+        }
+        let settled = false;
+        const finish = (stl) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          worker.terminate();
+          resolve(stl);
+        };
+        const timer = setTimeout(() => {
+          const stl = makePrintableShellStl(cuts, drawer, settings);
+          stl.threaded = false;
+          finish(stl);
+        }, 120000);
+        worker.onmessage = ev => {
+          if (ev.data && ev.data.ok && ev.data.stl) finish(ev.data.stl);
+          else {
+            console.warn("STL worker reported", ev.data && ev.data.error);
+            const stl = makePrintableShellStl(cuts, drawer, settings);
+            stl.threaded = false;
+            finish(stl);
+          }
+        };
+        worker.onerror = ev => {
+          console.warn("STL worker error", ev.message || ev);
+          const stl = makePrintableShellStl(cuts, drawer, settings);
+          stl.threaded = false;
+          finish(stl);
+        };
+        worker.postMessage({ cuts, drawer, settings });
+      });
+    }
+
     async function exportPrintableStl() {
       const data = buildLayoutExportData();
       if (data.error) {
@@ -4768,16 +4885,23 @@
       const settings = {
         thickness: Number(el.stlThicknessInput.value),
         wall: Number(el.stlWallInput.value),
-        pitch: Number(el.stlResolutionInput.value)
+        pitch: Number(el.stlResolutionInput.value),
+        name: safeFileBase(cleanProjectName())
       };
-      showBusy("Building 3D printable STL...", "Generating hollow-bottom shell mesh.", 12);
+      showBusy("Building 3D printable STL...", "Skin on the bed, pockets open upward.", 12);
       await nextFrame();
       try {
-        const stl = makePrintableShellStl(data.ents, data.drawer, settings);
-        updateBusy("Building 3D printable STL...", `${stl.cells.toLocaleString()} cells, ${stl.facets.toLocaleString()} facets.`, 86);
+        const stl = await buildShellStl(data.ents, data.drawer, settings);
+        updateBusy("Building 3D printable STL...", `${stl.facets.toLocaleString()} facets, about ${Math.round(stl.grams)} g.`, 86);
         await nextFrame();
         download(`${safeFileBase(cleanProjectName())}_shell.stl`, stl.content, "model/stl");
-        showNotice(`Exported STL, ${stl.wall} mm walls and skin. Inspect it in the slicer before printing.`);
+        if (el.massReadout) {
+          el.massReadout.textContent = `~${Math.max(1, Math.round(stl.grams))} g PLA`;
+          el.massReadout.dataset.threaded = stl.threaded ? "1" : "0";
+          el.massReadout.dataset.grams = String(Math.round(stl.grams));
+        }
+        const pitchNote = stl.adaptedPitch ? ` Cavity detail widened to ${stl.pitch.toFixed(2)} mm so the board would fit.` : "";
+        showNotice(`Exported STL. Skin is on the bed. About ${stl.grams.toFixed(0)} g of PLA, from the mesh volume (estimate).${pitchNote}`);
       } catch (err) {
         showNotice("STL export blocked: " + err.message);
       } finally {
@@ -4851,16 +4975,23 @@
       const w = Math.max(0, Number(el.drawerW.value) || 0);
       const h = Math.max(0, Number(el.drawerH.value) || 0);
       const t = Math.max(0, Number(el.stlThicknessInput.value) || 0);
-      const wall = Math.min(t, Math.max(0, Number(el.stlWallInput.value) || 0));
+      const skin = Math.min(t, Math.max(0, Number(el.stlWallInput.value) || 0));
+      if (skin <= 0 || t <= skin) return Math.max(0, w * h * t / 1000 * 1.24);
+      let pocketVoid = 0;
       let pocketArea = 0;
       state.items.forEach(item => {
         const tool = getTool(item.toolId);
-        if (tool) pocketArea += Math.abs(polygonArea(tool.points));
+        if (!tool) return;
+        const area = Math.abs(polygonArea(tool.points));
+        pocketArea += area;
+        const depth = Math.min(t - skin, Math.max(0, Number(item.pocketDepth || tool.pocketDepth) || 15));
+        pocketVoid += area * depth;
       });
-      const floor = w * h * wall;
-      const lip = Math.max(0, 2 * (w + h) * wall * Math.max(0, t - wall));
-      const voidVol = Math.min(floor, pocketArea * Math.max(0, t - wall));
-      return Math.max(0, (floor + lip - voidVol) / 1000 * 1.24);
+      const innerW = Math.max(0, w - 2 * skin);
+      const innerH = Math.max(0, h - 2 * skin);
+      const cavityArea = Math.max(0, innerW * innerH - pocketArea);
+      const cavityVoid = cavityArea * (t - skin);
+      return Math.max(0, (w * h * t - pocketVoid - cavityVoid) / 1000 * 1.24);
     }
 
     function renderExportReport(report = validateLayout()) {
@@ -5318,6 +5449,15 @@
     el.redoLayout.addEventListener("click", () => redoLayout());
     el.rotateLeft.addEventListener("click", () => rotateSelected(-15));
     el.rotateRight.addEventListener("click", () => rotateSelected(15));
+    el.pocketDepthInput.addEventListener("input", () => {
+      const item = getSelectedItem();
+      if (!item) return;
+      const depth = Math.max(0.4, Number(el.pocketDepthInput.value) || 15);
+      item.pocketDepth = depth;
+      const tool = getTool(item.toolId);
+      if (tool) tool.pocketDepth = depth;
+      renderExportReport();
+    });
     el.rotInput.addEventListener("input", () => {
       const item = getSelectedItem();
       if (!item) return;
