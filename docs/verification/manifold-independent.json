@@ -1,0 +1,342 @@
+{
+  "print-before": {
+    "board": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 661292.3354887065,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          500.0,
+          350.0,
+          18.0
+        ]
+      ],
+      "facets": 24004
+    },
+    "tile-A1.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 227730.15868726993,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          178.0,
+          150.0,
+          18.0
+        ]
+      ],
+      "facets": 4848
+    },
+    "tile-B1.stl": {
+      "watertight": false,
+      "winding": true,
+      "open_edges": 9,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 223692.44581066328,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          170.0,
+          150.0,
+          18.0
+        ]
+      ],
+      "facets": 4997
+    },
+    "tile-C1.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 185360.79631556428,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          152.0,
+          150.0,
+          18.0
+        ]
+      ],
+      "facets": 3626
+    },
+    "tile-A2.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 298926.3850607236,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          178.0,
+          200.0,
+          18.0
+        ]
+      ],
+      "facets": 6756
+    },
+    "tile-B2.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 265750.3226477951,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          178.0,
+          200.0,
+          18.0
+        ]
+      ],
+      "facets": 5714
+    },
+    "tile-C2.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 238716.3596539745,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          152.0,
+          200.0,
+          18.0
+        ]
+      ],
+      "facets": 5000
+    },
+    "clearance-coupon.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 2,
+      "volume_mm3": 11129.937644133513,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          80.0,
+          22.0,
+          8.0
+        ]
+      ],
+      "facets": 288
+    }
+  },
+  "print-final": {
+    "board": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 661810.1904974397,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          500.0,
+          350.0,
+          18.0
+        ]
+      ],
+      "facets": 12060
+    },
+    "tile-A1.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 227913.2175768145,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          178.0,
+          150.0,
+          18.0
+        ]
+      ],
+      "facets": 1712
+    },
+    "tile-B1.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 223839.20252279504,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          170.0,
+          150.0,
+          18.0
+        ]
+      ],
+      "facets": 1892
+    },
+    "tile-C1.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 185548.55760400425,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          152.0,
+          150.0,
+          18.0
+        ]
+      ],
+      "facets": 944
+    },
+    "tile-A2.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 299177.9931149576,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          178.0,
+          200.0,
+          18.0
+        ]
+      ],
+      "facets": 2716
+    },
+    "tile-B2.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 265792.8087546583,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          178.0,
+          200.0,
+          18.0
+        ]
+      ],
+      "facets": 2128
+    },
+    "tile-C2.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 1,
+      "volume_mm3": 238901.8764065278,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          152.0,
+          200.0,
+          18.0
+        ]
+      ],
+      "facets": 1712
+    },
+    "clearance-coupon.stl": {
+      "watertight": true,
+      "winding": true,
+      "open_edges": 0,
+      "nonmanifold_edges": 0,
+      "bodies": 2,
+      "volume_mm3": 11199.485836297981,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          80.0,
+          22.0,
+          8.0
+        ]
+      ],
+      "facets": 88
+    }
+  }
+}

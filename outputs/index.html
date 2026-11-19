@@ -6,9 +6,6 @@
   <title>SnapInset</title>
   <meta name="description" content="SnapInset — Snap your tools. Print the fit. Turn a photo of tools on paper into a drawer shadow board and a 3D-printable STL.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 112 112'%3E%3Crect width='112' height='112' rx='22' fill='%231B4532'/%3E%3Cpath d='M14 38V22q0-8 8-8h16M74 14h16q8 0 8 8v16M98 74v16q0 8-8 8H74M38 98H22q-8 0-8-8V74' fill='none' stroke='%23EEE2CB' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
@@ -187,6 +184,12 @@
     .modalBody { background: var(--canvas); border: 1px solid var(--cream-line); border-radius: var(--r-md); display: grid; place-items: center; min-height: 220px; }
     .modalBody img, #exportPreviewCanvas { max-width: 100%; height: auto; }
     .previewMeta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .captureWarning { color: #7a480d; font-size: 13px; margin-top: 4px; }
+    .captureWarning:empty { display: none; }
+    .captureCaliper { align-items: end; }
+    .captureCheckbox { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    #batchCaptureAuto { width: auto; }
+    #previewImage { max-height: 46vh; object-fit: contain; }
     .help-copy { display: grid; gap: 8px; color: var(--ink); }
     .help-copy kbd { font-family: var(--font-mono); background: var(--cream-raised); border: 1px solid var(--cream-line); border-radius: 4px; padding: 0 4px; }
     body[data-view="capture"] #arrangeView { display: none; }
@@ -201,8 +204,6 @@
       header { grid-template-columns: 1fr auto; padding: 8px 12px; row-gap: 8px; }
       .stepper { grid-column: 1 / -1; order: 3; justify-content: space-between; }
       .step { padding: 4px 6px; font-size: 12px; }
-      .step span { display: none; }
-      .step.active span { display: inline; }
       .hr .hide-m { display: none; }
       .body { grid-template-columns: 1fr; grid-template-rows: minmax(280px, 1fr) auto; overflow: auto; }
       .side.left { display: none; }
@@ -215,6 +216,7 @@
       .paper-art { width: 120px; height: 160px; }
     }
   </style>
+  <link rel="stylesheet" href="./ui.css">
 </head>
 <body data-view="capture">
   <div class="app">
@@ -245,6 +247,7 @@
         <button id="helpBtn" class="btn" type="button" aria-label="Help">?</button>
       </div>
     </header>
+    <div id="toast" class="toast success hidden" role="status"></div>
     <div class="body">
       <aside class="side left" aria-label="Tool library">
         <h2>Tools <span class="badge ok" id="toolCount">0 accepted</span></h2>
@@ -280,10 +283,24 @@
               </label>
             </div>
             <div class="row">
-              <button id="processBtn" class="btn primary lg" type="button" style="width:auto;min-width:180px">Detect tools</button>
-              <button id="choosePhotos" class="btn" type="button">Choose photos</button>
+              <button id="choosePhotos" class="btn primary" type="button">Choose photos</button>
               <button id="takePhoto" class="btn show-m" type="button">Take photo</button>
             </div>
+            <details>
+              <summary>Checks for this batch</summary>
+              <div class="grid2">
+                <label>Tool type<select id="batchCaptureKind"><option value="">Unassigned</option>
+                <option value="scissors">Scissors</option>
+                <option value="pliers">Pliers or cutters</option>
+                <option value="needle-nose">Needle-nose pliers</option>
+                <option value="screwdriver">Screwdriver</option>
+                <option value="punch">Punch</option>
+                <option value="wrench">Wrench</option></select></label>
+                <label>Expected longest span (mm)<input id="batchCaptureExpected" type="number" min="1" max="1000" step="any"></label>
+              </div>
+              <label class="captureCheckbox"><input id="batchCaptureAuto" type="checkbox"> Auto-accept contours that pass</label>
+              <p class="note">Use these settings for photos of tools of the same type and size. Auto-accept needs both values.</p>
+            </details>
             <button id="sampleBtn" class="linkish" type="button">No photo yet? Try the sample drawer</button>
             <input id="fileInput" class="sr-only" type="file" accept="image/*" multiple>
             <input id="cameraInput" class="sr-only" type="file" accept="image/*" capture="environment">
@@ -311,6 +328,7 @@
           </div>
           <div class="stage">
             <canvas id="layoutCanvas" aria-label="Drawer layout"></canvas>
+            <div id="pocketDepthReadout" class="badge info hidden"></div>
             <div class="legend" aria-hidden="true">
               <span><i class="sw" style="background:#1F2A24;height:3px"></i>Cut contour</span>
               <span><i class="sw" style="background:#1B4532;height:5px"></i>Selected</span>
@@ -323,6 +341,59 @@
           </div>
           <div class="hint" id="arrangeHint">Drag tools to move. Arrow keys nudge 1 mm (Shift = 10). R rotates 15°. Ctrl+Z undoes.</div>
         </div>
+        <section id="exportView" aria-labelledby="exportHeading">
+          <h2 id="exportHeading">Export drawer layout</h2>
+          <div class="export-grid">
+            <figure class="export-figure">
+              <canvas id="outputPreviewCanvas" aria-label="Preview of the drawer cutouts"></canvas>
+              <figcaption id="outputPreviewSummary"></figcaption>
+            </figure>
+            <div class="export-block" id="exportBlock">
+              <div id="outputReportSlot"></div>
+              <div class="seg" role="group" aria-label="Output">
+                <button id="exportModePrint" type="button" aria-pressed="true">3D print</button>
+                <button id="exportModeLaser" type="button" aria-pressed="false">Laser cut</button>
+              </div>
+              <div class="ok-row" id="printBoardMeta"><span id="boardMeta">18 mm board · 2 mm wall</span><b id="massReadout" title="Shared perimeter, skin and infill estimate">—</b></div>
+              <div id="printEstimates" class="note" aria-live="polite">Open Export to prepare estimates.</div>
+              <details id="printSettings">
+                <summary>Advanced print settings</summary>
+                <div class="stack">
+                  <div class="grid2">
+                    <label>Board thickness mm<input id="stlThicknessInput" type="number" value="18" min="3" step="0.5"></label>
+                    <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
+                  </div>
+                  <div class="grid2"><label>Infill %<input id="print-infillPercent" type="number" value="15" min="0" step="1"></label><label>Perimeters<input id="print-perimeters" type="number" value="3" min="0" step="1"></label><label>Line width mm<input id="print-lineWidth" type="number" value="0.45" min="0" step=".01"></label><label>Layer height mm<input id="print-layerHeight" type="number" value="0.2" min="0" step=".01"></label><label>Top layers<input id="print-topLayers" type="number" value="4" min="0" step="1"></label><label>Bottom layers<input id="print-bottomLayers" type="number" value="4" min="0" step="1"></label><label>Effective flow mm³/s<input id="print-flow" type="number" value="7" min="0" step="1"></label></div>
+                  <label>STL cavity detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="4" step="0.25"></label>
+                  <p class="note">The solid skin prints on the bed and each pocket keeps a floor. A large board coarsens the cavity grid on its own.</p>
+                  <label>Printer bed
+                    <select id="bedPreset">
+                      <option value="a1mini">Bambu A1 mini — 180 × 180</option>
+                      <option value="a1" selected>Bambu A1 / P1S / X1C — 256 × 256</option>
+                      <option value="h2d">Bambu H2D — 325 × 320</option>
+                      <option value="mk4s">Prusa MK4S — 250 × 210</option>
+                      <option value="coreone">Prusa CORE One — 250 × 220</option>
+                      <option value="ender3">Ender-3 V3 — 220 × 220</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
+                  <div class="grid2">
+                    <label>Bed width mm<input id="bedW" type="number" value="256" min="80" step="1"></label>
+                    <label>Bed depth mm<input id="bedH" type="number" value="256" min="80" step="1"></label>
+                  </div>
+                  <div class="grid2">
+                    <label>Margin mm/side<input id="bedMargin" type="number" value="3" min="0" max="15" step="0.5"></label>
+                    <label>Key clearance mm<input id="keyClearance" type="number" value="0.25" min="0.2" max="0.3" step="0.01"></label>
+                  </div>
+                  <p id="tileReadout" class="note">Tiles are cut when the board is larger than the bed, with dovetail keys along the seams.</p>
+                </div>
+              </details>
+              <button id="downloadStl" class="btn primary lg" type="button">Export STL</button>
+              <button id="downloadTiles" class="btn" type="button">Export tiles</button>
+              <button id="downloadLayout" class="btn primary lg hidden" type="button">Export DXF</button>
+            </div>
+          </div>
+        </section>
       </main>
       <aside class="side right" id="drawerCard" aria-label="Layout and export">
         <h2 class="m-hide">Drawer</h2>
@@ -350,55 +421,19 @@
           <option value="tidy" selected>Tidy</option>
           <option value="dense">Dense</option>
         </select>
-        <div id="exportReport" class="check ok" role="status"></div>
+        <div id="drawerReportSlot"><div id="exportReport" class="check ok" role="status"></div></div>
         <div class="ok-row m-hide"><span>Smallest gap</span><b id="gapReadout">—</b></div>
         <div class="ok-row m-hide"><span>Board used</span><b id="usedReadout">—</b></div>
-        <div class="export-block" id="exportBlock">
-          <div class="seg" role="group" aria-label="Output">
-            <button id="exportModePrint" type="button" aria-pressed="true">3D print</button>
-            <button id="exportModeLaser" type="button" aria-pressed="false">Laser cut</button>
+        <details>
+          <summary>Arrange settings</summary>
+          <div class="stack">
+          <div class="grid2">
+            <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
+            <label>Arrange time limit sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
           </div>
-          <div class="ok-row"><span id="boardMeta">18 mm board · 2 mm wall</span><b id="massReadout" title="Estimate: volume × PLA density 1.24 g/cm³">—</b></div>
-          <details>
-            <summary>Advanced print settings</summary>
-            <div class="stack">
-              <div class="grid2">
-                <label>Board thickness mm<input id="stlThicknessInput" type="number" value="18" min="3" step="0.5"></label>
-                <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
-              </div>
-              <label>STL cavity detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="4" step="0.25"></label>
-              <p class="note">The solid skin prints on the bed and each pocket keeps a floor. A large board coarsens the cavity grid on its own.</p>
-              <label>Printer bed
-                <select id="bedPreset">
-                  <option value="a1mini">Bambu A1 mini — 180 × 180</option>
-                  <option value="a1" selected>Bambu A1 / P1S / X1C — 256 × 256</option>
-                  <option value="h2d">Bambu H2D — 325 × 320</option>
-                  <option value="mk4s">Prusa MK4S — 250 × 210</option>
-                  <option value="coreone">Prusa CORE One — 250 × 220</option>
-                  <option value="ender3">Ender-3 V3 — 220 × 220</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-              <div class="grid2">
-                <label>Bed width mm<input id="bedW" type="number" value="256" min="80" step="1"></label>
-                <label>Bed depth mm<input id="bedH" type="number" value="256" min="80" step="1"></label>
-              </div>
-              <div class="grid2">
-                <label>Margin mm/side<input id="bedMargin" type="number" value="3" min="0" max="15" step="0.5"></label>
-                <label>Key clearance mm<input id="keyClearance" type="number" value="0.25" min="0.2" max="0.3" step="0.01"></label>
-              </div>
-              <p id="tileReadout" class="note">Tiles are cut when the board is larger than the bed, with dovetail keys along the seams.</p>
-              <div class="grid2">
-                <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
-                <label>Arrange time limit sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
-              </div>
-            </div>
-          </details>
-          <button id="downloadStl" class="btn primary lg" type="button">Export STL</button>
-          <button id="downloadTiles" class="btn" type="button">Export tiles</button>
-          <button id="downloadLayout" class="btn primary lg hidden" type="button">Export DXF</button>
-          <div class="note m-hide">Preview, layout and project saves are free</div>
-        </div>
+          </div>
+        </details>
+        <button id="goToExport" class="btn primary" type="button">Continue to export</button>
         <details id="selectionTools">
           <summary>Selected tool</summary>
           <div class="stack">
@@ -409,6 +444,7 @@
               <button id="rotateRight" class="btn" type="button" aria-label="Rotate clockwise 15 degrees">+15°</button>
             </div>
             <button id="lockSelected" class="btn" type="button">Lock position</button>
+            <button id="reviewSelectedCapture" class="btn" type="button">Review outline</button>
             <button id="duplicateSelected" class="btn" type="button">Duplicate</button>
             <button id="downloadSelected" class="btn" type="button">Export selected DXF</button>
             <button id="deleteSelected" class="btn danger" type="button">Delete</button>
@@ -423,6 +459,7 @@
               <button id="importProject" class="btn" type="button">Import JSON</button>
             </div>
             <button id="newProject" class="btn danger" type="button">New project</button>
+            <label class="project-preview-option"><input id="projectIncludePreviews" type="checkbox"> Include photo thumbnails in JSON</label>
             <input id="importProjectInput" class="sr-only" type="file" accept="application/json,.json">
           </div>
         </details>
@@ -434,7 +471,6 @@
     </div>
   </div>
   <div id="status" class="sr-only" role="status"></div>
-  <div id="toast" class="toast success hidden" role="status"></div>
   <div id="busyOverlay" class="busyOverlay hidden" aria-live="polite" aria-busy="true">
     <div class="busyBox">
       <div class="spinner" aria-hidden="true"></div>
@@ -450,34 +486,59 @@
         <div>
           <strong id="previewTitle">Detected tool preview</strong>
           <div id="previewMeta" class="previewMeta"></div>
+          <div id="captureReading" class="previewMeta"></div>
+          <div id="captureWarnings" class="captureWarning" aria-live="polite"></div>
+          <div id="captureParallax" class="previewMeta"></div>
         </div>
         <button id="closePreview" class="btn" type="button">Close</button>
       </div>
-      <div class="modalBody">
-        <img id="previewImage" alt="Detected tool contour preview">
-      </div>
-      <label>Tool name<input id="previewName" type="text" placeholder="e.g. 10 mm spanner"></label>
-      <details>
-        <summary>Advanced contour settings</summary>
-        <div class="stack">
-          <div class="grid2">
-            <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
-            <label>Gap repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
-          </div>
-          <div class="grid2">
-            <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
-            <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
-          </div>
-          <label>Finger pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
-          <p class="note" style="text-align:left">These apply the next time a contour is detected. Changing them here reprocesses the tool you are reviewing.</p>
+      <div class="review-content">
+        <div class="modalBody">
+          <img id="previewImage" alt="Detected tool contour preview">
         </div>
-      </details>
-      <div class="modalTools">
-        <button id="adjustCorners" class="btn" type="button">Adjust corners</button>
-        <button id="reprocessPreview" class="btn" type="button">Reprocess</button>
-        <button id="deletePreview" class="btn danger" type="button">Reject</button>
-        <button id="acceptPreview" class="btn primary" type="button">Accept contour</button>
+        <label>Tool name<input id="previewName" type="text" placeholder="e.g. 10 mm spanner"></label>
+      <div class="grid2">
+        <label>Tool type<select id="captureKind"><option value="">Unassigned</option>
+                <option value="scissors">Scissors</option>
+                <option value="pliers">Pliers or cutters</option>
+                <option value="needle-nose">Needle-nose pliers</option>
+                <option value="screwdriver">Screwdriver</option>
+                <option value="punch">Punch</option>
+                <option value="wrench">Wrench</option></select></label>
+        <label>Expected longest span (mm)<input id="captureExpected" type="number" min="1" max="1000" step="any"></label>
       </div>
+      <div class="grid2 captureCaliper">
+        <label>Caliper span (mm)<input id="captureMeasured" type="number" min="1" max="1000" step="any" aria-describedby="captureCaliperHint"></label>
+        <button id="applyCaliper" class="btn" type="button">Apply scale</button>
+      </div>
+      <p id="captureCaliperHint" class="note">Measure the longest straight-line distance across the tool. Clear the field and apply to restore the photo scale.</p>
+        <details>
+          <summary>Advanced contour settings</summary>
+          <div class="stack">
+            <div class="grid2">
+              <label>Offset mm<input id="offsetInput" type="number" value="2" min="0" step="0.1"></label>
+              <label>Gap repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
+            </div>
+            <div class="grid2">
+              <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
+              <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
+            </div>
+            <label>Finger pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
+            <p class="note" style="text-align:left">These apply the next time a contour is detected. Changing them here reprocesses the tool you are reviewing.</p>
+          </div>
+        </details>
+      </div>
+      <footer class="review-actions">
+        <div class="modalTools">
+          <button id="acceptAllInPreview" class="btn" type="button">Accept all</button>
+        <button id="acceptPreview" class="btn primary" type="button">Accept contour</button>
+        </div>
+        <div class="modalTools review-secondary">
+          <button id="adjustCorners" class="btn" type="button">Adjust corners</button>
+          <button id="reprocessPreview" class="btn" type="button">Reprocess</button>
+          <button id="deletePreview" class="btn danger" type="button">Reject</button>
+        </div>
+      </footer>
     </div>
   </div>
   <div id="exportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
@@ -490,8 +551,9 @@
         <button id="closeExportPreview" class="btn" type="button">Cancel</button>
       </div>
       <div class="modalBody">
-        <canvas id="exportPreviewCanvas"></canvas>
+        <canvas id="exportPreviewCanvas" aria-label="DXF preview with numbered tool cutouts"></canvas>
       </div>
+      <ol id="exportToolNames" aria-label="Tools in the preview"></ol>
       <div class="modalTools">
         <button id="downloadSvg" class="btn" type="button">Download SVG</button>
         <button id="confirmExport" class="btn primary" type="button">Download DXF</button>
@@ -526,7 +588,12 @@
       </div>
     </div>
   </div>
+<script src="capture-quality.js"></script>
+<script src="vendor/earcut-2.2.4.min.js"></script>
+<script src="vendor/polygon-clipping-0.15.7.min.js"></script>
+<script src="print-estimates.js"></script>
 <script>
+    const printEstimator=createPrintEstimator();
 
     const PAPER_SIZES = {
       a4: { label: "A4", w: 210, h: 297 },
@@ -577,7 +644,6 @@
 
     const el = {
       fileInput: document.getElementById("fileInput"),
-      processBtn: document.getElementById("processBtn"),
       status: document.getElementById("status"),
       toolList: document.getElementById("toolList"),
       layoutItems: document.getElementById("layoutItems"),
@@ -650,6 +716,18 @@
       busyStop: document.getElementById("busyStop"),
       emptyState: document.getElementById("emptyState"),
       previewName: document.getElementById("previewName"),
+      batchCaptureKind: document.getElementById("batchCaptureKind"),
+      batchCaptureExpected: document.getElementById("batchCaptureExpected"),
+      batchCaptureAuto: document.getElementById("batchCaptureAuto"),
+      captureKind: document.getElementById("captureKind"),
+      captureExpected: document.getElementById("captureExpected"),
+      captureMeasured: document.getElementById("captureMeasured"),
+      applyCaliper: document.getElementById("applyCaliper"),
+      captureReading: document.getElementById("captureReading"),
+      captureWarnings: document.getElementById("captureWarnings"),
+      captureParallax: document.getElementById("captureParallax"),
+      acceptAllInPreview: document.getElementById("acceptAllInPreview"),
+      reviewSelectedCapture: document.getElementById("reviewSelectedCapture"),
       cameraInput: document.getElementById("cameraInput"),
       sampleBtn: document.getElementById("sampleBtn"),
       drawerPreset: document.getElementById("drawerPreset"),
@@ -700,12 +778,11 @@
       }
       state.view = name === "upload" || name === "setup" ? "capture" : name;
       updateWorkflow();
-      if (state.view === "arrange" || state.view === "export") {
+      if (state.view === "arrange") {
         canvasRectCache = null;
-        requestAnimationFrame(() => {
-          fitView();
-          if (state.view === "export") document.getElementById("exportBlock")?.scrollIntoView({ block: "nearest" });
-        });
+        requestAnimationFrame(fitView);
+      } else if (state.view === "export") {
+        document.querySelector(".body").scrollTop = 0;
       }
     }
 
@@ -723,6 +800,9 @@
       const order = ["capture", "review", "arrange", "export"];
       const current = order.includes(state.view) ? state.view : "capture";
       document.body.dataset.view = current;
+      const reportSlot = document.getElementById(current === "export" ? "outputReportSlot" : "drawerReportSlot");
+      if (el.exportReport.parentElement !== reportSlot) reportSlot.appendChild(el.exportReport);
+      if (current === "export") drawOutputPreview();
       el.workflowSteps.forEach((s, index) => {
         const step = s.dataset.step;
         const done = (step === "capture" && state.tools.length && current !== "capture")
@@ -859,13 +939,14 @@
     }
 
     function serializeProject(options = {}) {
-      const includeLargePreviews = options.includeLargePreviews !== false;
+      const includePreviews = options.includePreviews === true;
       return {
         app: "SnapInset",
         version: 2,
         name: cleanProjectName(),
         savedAt: new Date().toISOString(),
         settings: {
+          printProfile: printProfile(),
           paperSize: el.paperSize.value,
           drawerW: Number(el.drawerW.value),
           drawerH: Number(el.drawerH.value),
@@ -895,8 +976,12 @@
           fitStatus: tool.fitStatus || "",
           sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
           defaultPulls: clonePulls(tool.defaultPulls),
-          preview: tool.preview,
-          previewLarge: includeLargePreviews ? tool.previewLarge : "",
+          ...(includePreviews && tool.preview ? { preview: tool.preview } : {}),
+          capture: tool.capture ? {
+            points: tool.capture.points, clearance: tool.capture.clearance, kind: tool.capture.kind,
+            expectedLength: tool.capture.expectedLength, measuredLength: tool.capture.measuredLength
+          } : null,
+          captureOrigin: tool.captureOrigin || null,
           scaleConfidence: Number.isFinite(tool.scaleConfidence) ? tool.scaleConfidence : null,
           edgeWarning: !!tool.edgeWarning,
           manualScale: !!tool.manualScale,
@@ -923,6 +1008,9 @@
         throw new Error("This is not a valid SnapInset project file.");
       }
       const settings = project.settings || {};
+      const profile=printEstimator.normalize(settings.printProfile);
+      for(const key of Object.keys(profile)){const input=document.getElementById("print-"+key);if(input)input.value=profile[key];}
+      state.printModels=null;
       el.projectName.value = project.name || settings.projectName || "snapinset";
       el.paperSize.value = settings.paperSize || "a4";
       el.drawerW.value = settings.drawerW || 560;
@@ -956,6 +1044,8 @@
         defaultPulls: clonePulls(tool.defaultPulls || []),
         preview: tool.preview || "",
         previewLarge: tool.previewLarge || tool.preview || "",
+        capture: restoreCaptureMetadata(tool.capture),
+        captureOrigin: Number.isFinite(tool.captureOrigin?.x) && Number.isFinite(tool.captureOrigin?.y) ? tool.captureOrigin : null,
         pocketDepth: Number(tool.pocketDepth) || 15,
         scaleConfidence: Number.isFinite(tool.scaleConfidence) ? Number(tool.scaleConfidence) : null,
         edgeWarning: !!tool.edgeWarning,
@@ -968,6 +1058,10 @@
           h: Number(tool.pageBox.h) || 0
         } : null
       })).filter(tool => tool.points.length > 2);
+      for (const tool of state.tools) {
+        if (!tool.preview) tool.preview = samplePreview(tool);
+        if (!tool.previewLarge) tool.previewLarge = tool.preview;
+      }
       const toolIds = new Set(state.tools.map(tool => tool.id));
       state.items = project.items.map(item => ({
         id: String(item.id),
@@ -993,7 +1087,7 @@
 
     function saveProject(auto = false) {
       try {
-        localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(serializeProject({ includeLargePreviews: false })));
+        localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(serializeProject({ includePreviews: true })));
         if (el.savedLabel) el.savedLabel.textContent = "Saved in this browser";
         if (!auto) showNotice(`Project "${cleanProjectName()}" saved in this browser.`);
         return true;
@@ -1049,7 +1143,8 @@
 
     function exportProjectFile() {
       const name = safeFileBase(cleanProjectName());
-      download(`${name}_project.json`, JSON.stringify(serializeProject({ includeLargePreviews: true }), null, 2), "application/json");
+      const includePreviews = document.getElementById("projectIncludePreviews").checked;
+      download(`${name}_project.json`, JSON.stringify(serializeProject({ includePreviews })), "application/json");
       showNotice(`Project "${cleanProjectName()}" JSON exported.`);
     }
 
@@ -1078,7 +1173,9 @@
       el.previewMeta.textContent = `Contour ${index + 1} of ${state.tools.length} | ${tool.width.toFixed(0)} × ${tool.height.toFixed(0)} mm | ${status}${confidence}${edge}`;
       el.previewImage.src = tool.previewLarge || tool.preview;
       el.acceptPreview.textContent = tool.accepted ? "Accepted" : "Accept contour";
+      el.previewModal.querySelector(".review-content").scrollTop = 0;
       el.previewName.value = tool.name;
+      renderCaptureReview(tool);
       state.view = "review";
       el.previewModal.classList.remove("hidden");
       updateWorkflow();
@@ -1159,6 +1256,11 @@
           return;
         }
         const name = tool.name;
+        if (tool.capture && fresh.capture) {
+          fresh.capture.kind = tool.capture.kind;
+          fresh.capture.expectedLength = tool.capture.expectedLength;
+          if (tool.capture.measuredLength) setCaliperLength(fresh, tool.capture.measuredLength);
+        }
         Object.assign(tool, fresh, { id: tool.id, name, accepted: false, fitStatus: "", sourceIndex: tool.sourceIndex });
         for (const extra of list) {
           if (extra === fresh) continue;
@@ -1872,6 +1974,7 @@
         bright[i] = (values[0]+values[1]+values[2])/3;
         sat[i] = Math.max(...values)-Math.min(...values);
       }
+      const shadow = captureShadowMask(bright, sat, w, h);
       const fine = boxBlurFloat(bright,w,h,1);
       const local = boxBlurFloat(bright,w,h,Math.round(1.2*PROC_PX_PER_MM));
       const mask = new Uint8Array(n), evidence = new Uint8Array(n);
@@ -1886,8 +1989,8 @@
         const edgeThreshold = bright[i] > .85 ? .03 : .06;
         const edge = grad > edgeThreshold || local[i]-bright[i] > .07 ||
           (bright[i] > 1.05 && bright[i]-local[i] > .07);
-        if (core || edge) mask[i] = 1;
-        if (edge) evidence[i] = 1;
+        if (!shadow[i] && (core || edge)) mask[i] = 1;
+        if (!shadow[i] && edge) evidence[i] = 1;
       }
       let clean = boxErode(boxDilate(mask,w,h,2),w,h,2);
       const fringe = Math.max(1, Math.round(2 * PROC_PX_PER_MM));
@@ -2312,6 +2415,7 @@
       }
       const tool = getTool(item.toolId);
       const pulls = itemPulls(item);
+      if (!pulls.length) return tool.points;
       const all = tool.points.slice();
       pulls.forEach(p => {
         all.push({ x: p.x - p.r, y: p.y - p.r }, { x: p.x + p.r, y: p.y + p.r });
@@ -2400,7 +2504,7 @@
       });
       g.closePath();
       g.stroke();
-      return c.toDataURL("image/png");
+      return maxW <= 170 ? c.toDataURL("image/webp", 0.72) : c.toDataURL("image/png");
     }
 
     async function processFile(file, index, manualCorners) {
@@ -2422,7 +2526,20 @@
         if (!contour || contour.length < 8) continue;
         contour = smoothDetectionContour(contour, Number(el.spacingInput.value), Number(el.smoothInput.value));
         const norm = normalizeMm(contour);
-        if (norm.width < 8 || norm.height < 8) continue;
+        if (norm.width < 2 || norm.height < 2) continue;
+        const nominalContour = offsetPx > 0
+          ? smoothDetectionContour(traceMask(part.mask, part.w, part.h), Number(el.spacingInput.value), Number(el.smoothInput.value))
+          : contour;
+        const nominal = normalizeMm(nominalContour);
+        const capture = {
+          points: nominal.points, clearance: offsetPx / PROC_PX_PER_MM, shape: captureShape(nominal.points),
+          kind: "", expectedLength: null, measuredLength: null
+        };
+        const pocketBox = bboxPoints(contour), nominalBox = bboxPoints(nominalContour);
+        const captureOrigin = {
+          x: (pocketBox.x0 - nominalBox.x0) / PROC_PX_PER_MM,
+          y: (pocketBox.y0 - nominalBox.y0) / PROC_PX_PER_MM
+        };
         state.toolSeq = (state.toolSeq || 0) + 1;
         tools.push({
           id: "tool-" + Date.now().toString(36) + "-" + state.toolSeq,
@@ -2438,6 +2555,8 @@
           previewLarge: previewCanvas(page.canvas, contour, 760, 980),
           scaleConfidence: Math.min(page.confidence, part.confidence),
           detectionMetrics: part.metrics,
+          capture,
+          captureOrigin,
           scaleWarning: "Paper-plane dimensions; object height and camera distance are unknown. Raised surfaces can measure oversize.",
           edgeWarning: part.edgeWarning,
           corners: page.corners.map(p => ({ x: p.x, y: p.y })),
@@ -2749,9 +2868,11 @@
       if (rect.width < 40 || rect.height < 40) { fitView.running = false; return; }
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
-      state.scale = Math.min((rect.width - 44) / dw, (rect.height - 44) / dh);
-      state.viewX = 26;
-      state.viewY = 26;
+      const compact = window.matchMedia("(max-width: 900px)").matches;
+      const padding = compact ? 22 : 44;
+      state.scale = Math.min((rect.width - padding) / dw, (rect.height - padding) / dh);
+      state.viewX = compact ? (rect.width - dw * state.scale) / 2 : 26;
+      state.viewY = compact ? (rect.height - dh * state.scale) / 2 : 26;
       drawLayout();
       fitView.running = false;
     }
@@ -3226,7 +3347,7 @@
         while (moved && guard++ < NEST_MAX_COMPACT_ROUNDS && !shouldStop()) {
           moved = false;
           placed.forEach((p, index) => {
-            if (shouldStop()) return;
+            if (p.item.locked || shouldStop()) return;
             let current = p;
             let changed = true;
             while (changed && !shouldStop()) {
@@ -3262,12 +3383,14 @@
       await nextFrame();
       const dw = Number(el.drawerW.value);
       const dh = Number(el.drawerH.value);
-      const gap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
+      const requestedGap = Math.max(0, Number(el.arrangeSpacingInput.value) || 0);
+      // Packing uses simplified footprints. Keep a small margin for exact export contours.
+      const gap = requestedGap + 0.4;
+      const tidy = el.rotationMode.value !== "dense";
+      const modeName = tidy ? "Tidy" : "Dense";
       const maxSeconds = Math.min(60, Math.max(1, Number(el.arrangeTimeInput.value) || 8));
       const deadline = performance.now() + maxSeconds * 1000;
       const shouldStop = () => state.arrangeStop || performance.now() >= deadline;
-      let overflow = 0;
-      let stoppedByTime = false;
       const entries = state.items
         .map((item, order) => {
           const fp0 = rotatedFootprint(item, 0);
@@ -3449,12 +3572,11 @@
           const itemProgress = (entryIndex / Math.max(1, arranged.length)) * (100 / totalOrders);
           updateBusy(
             "Arranging contours...",
-            `Pass ${orderIndex + 1}/${totalOrders}, item ${entryIndex + 1}/${arranged.length}. Stop limit ${maxSeconds}s.`,
+            `${modeName} pass ${orderIndex + 1}/${totalOrders}, tool ${entryIndex + 1}/${arranged.length}.`,
             orderProgress + itemProgress
           );
           await maybeYield();
           if (shouldStop()) {
-            stoppedByTime = true;
             return null;
           }
           const item = entry.item;
@@ -3498,7 +3620,6 @@
             scored.sort((a, b) => a.score - b.score);
             for (const s of scored) {
               if (shouldStop()) {
-                stoppedByTime = true;
                 break;
               }
               if (best && s.score >= best.score) break;
@@ -3511,7 +3632,6 @@
           }
 
           if (shouldStop()) {
-            stoppedByTime = true;
             return null;
           }
 
@@ -3525,7 +3645,6 @@
         await maybeYield();
         compactPlacements(placed, gap, dw, dh, shouldStop);
         if (placed.length < arranged.length + lockedPlacements.length) {
-          stoppedByTime = true;
           return null;
         }
         const used = layoutBounds(placed);
@@ -3554,14 +3673,21 @@
       }
 
       try {
-        const orders = [
+        const candidates = [
           [...arrangeEntries].sort((a, b) => b.area - a.area || a.order - b.order),
           [...arrangeEntries].sort((a, b) => b.height - a.height || b.area - a.area),
           [...arrangeEntries].sort((a, b) => b.width - a.width || b.area - a.area),
           [...arrangeEntries].sort((a, b) => b.aspect - a.aspect || b.area - a.area),
           [...arrangeEntries].sort((a, b) => a.order - b.order)
         ];
-        updateBusy("Arranging contours...", "Creating fast inside-board baseline layout.", 4);
+        const signatures = new Set();
+        const orders = candidates.filter(order => {
+          const signature = order.map(entry => entry.order).join(",");
+          if (signatures.has(signature)) return false;
+          signatures.add(signature);
+          return true;
+        });
+        updateBusy("Arranging contours...", `Finding a ${modeName.toLowerCase()} starting layout.`, 4);
         await nextFrame();
         const baselineOrder = [...arrangeEntries].sort((a, b) => b.height - a.height || b.area - a.area);
         let result = fastBboxArrange(baselineOrder) || safeShelfArrange(baselineOrder) || partialFastArrange(baselineOrder);
@@ -3569,22 +3695,19 @@
           applyPlacements(result);
           drawLayout();
         }
+        let passesWithoutGain = 0;
         for (let orderIndex = 0; orderIndex < orders.length; orderIndex++) {
-          const order = orders[orderIndex];
-          if (shouldStop() && result) {
-            stoppedByTime = true;
-            break;
-          }
-          const attempt = await arrangeOrder(order, orderIndex, orders.length);
-          if (attempt && (!result || attempt.score < result.score)) {
+          if (shouldStop() || (tidy && result?.overflow === 0)) break;
+          const lastScore = result?.score ?? Infinity;
+          const attempt = await arrangeOrder(orders[orderIndex], orderIndex, orders.length);
+          if (attempt && attempt.score < lastScore) {
             result = attempt;
             applyPlacements(result);
             drawLayout();
           }
-          if (shouldStop()) {
-            stoppedByTime = true;
-            break;
-          }
+          const meaningfulGain = (result?.score ?? Infinity) < lastScore * 0.995;
+          passesWithoutGain = meaningfulGain ? 0 : passesWithoutGain + 1;
+          if (result?.overflow === 0 && passesWithoutGain >= 2) break;
         }
         if (!result || !result.placed.length) {
           result = {
@@ -3595,8 +3718,6 @@
             source: "no fit"
           };
         }
-        overflow = result.overflow;
-
         updateBusy("Applying layout...", "Updating drawer and library fit status.", 100);
         await nextFrame();
         applyPlacements(result);
@@ -3618,11 +3739,11 @@
         state.selectedId = state.items[0]?.id || null;
         renderAll();
         if (unplacedEntries.length) {
-          showNotice(`${result.placed.length} placed. ${unplacedEntries.length} tool(s) could not fit and stayed in the library.`);
-        } else if (stoppedByTime) {
-          showNotice(`Arrange stopped ${state.arrangeStop ? "by you" : `at ${maxSeconds}s`}. Applied the best complete ${result.source} layout found.`);
+          showNotice(`${modeName} placed ${result.placed.length} tools. ${unplacedEntries.length} stayed in the library because they could not fit.`, "warn");
         } else {
-          showNotice(overflow ? `Arranged ${state.items.length} item(s). ${overflow} may exceed drawer size.` : `Densely arranged ${state.items.length} item(s).`);
+          const verb = state.arrangeStop ? "kept" : "placed";
+          const count = state.items.length;
+          showNotice(`${modeName} ${verb} ${count} tool${count === 1 ? "" : "s"} on the board.`);
         }
       } finally {
         el.autoArrange.disabled = false;
@@ -3700,7 +3821,7 @@
       resizeCanvas();
       const dpr = window.devicePixelRatio || 1;
       const dw = Number(el.drawerW.value), dh = Number(el.drawerH.value);
-      const thickness = Math.max(1, Number(el.stlThicknessInput.value) || 18);
+      const thickness = Math.max(3, Number(el.stlThicknessInput.value) || 18);
       const rect = canvasRect();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = "#FBFAF7";
@@ -3728,23 +3849,40 @@
       poly([S(0, 0, 0), S(dw, 0, 0), S(dw, 0, thickness), S(0, 0, thickness)], "#E3D5B8", "#1B4532");
       poly([S(dw, 0, 0), S(dw, dh, 0), S(dw, dh, thickness), S(dw, 0, thickness)], "#CDBF9F", "#1B4532");
       poly([S(0, 0, thickness), S(dw, 0, thickness), S(dw, dh, thickness), S(0, dh, thickness)], "#FBFAF7", "#1B4532");
+      const skin = Math.max(0.8, Number(el.stlWallInput.value) || 2);
+      const depthReadout = document.getElementById("pocketDepthReadout");
+      depthReadout.classList.add("hidden");
+      const trace = points => {
+        ctx.beginPath();
+        points.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+      };
       state.items.forEach(item => {
         const tool = getTool(item.toolId);
         if (!tool) return;
-        const depth = Math.min(Math.max(1, thickness - 2), Number(item.pocketDepth || tool.pocketDepth) || Math.min(15, thickness - 2));
-        const z = Math.max(2, thickness - depth);
-        ctx.beginPath();
-        tool.points.forEach((p, i) => {
-          const wpt = transformPoint(p, item, tool);
-          const s = S(wpt.x, wpt.y, z);
-          if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
-        });
-        ctx.closePath();
-        ctx.fillStyle = item._overlapping ? "#F3D6DB" : "#E7D7B4";
+        const depth = Math.max(0, Math.min(thickness - skin, Number(item.pocketDepth || tool.pocketDepth) || 15));
+        const world = combinedLocalPoints(item).map(p => transformPoint(p, item, tool));
+        if (world.length < 3) return;
+        const rim = world.map(p => S(p.x, p.y, thickness));
+        const floor = world.map(p => S(p.x, p.y, thickness - depth));
+        const selected = item.id === state.selectedId;
+        ctx.save();
+        trace(rim);
+        ctx.clip();
+        ctx.fillStyle = item._overlapping ? "#9E1B4B" : "#725632";
         ctx.fill();
-        ctx.strokeStyle = item.id === state.selectedId ? "#1B4532" : "#1F2A24";
-        ctx.lineWidth = item.id === state.selectedId ? 2.6 : 1.2;
+        trace(floor);
+        ctx.fillStyle = item._overlapping ? "#F3D6DB" : "#CAB183";
+        ctx.fill();
+        ctx.restore();
+        trace(rim);
+        ctx.strokeStyle = selected ? "#1B4532" : "#1F2A24";
+        ctx.lineWidth = selected ? 2.6 : 1.2;
         ctx.stroke();
+        if (selected) {
+          depthReadout.textContent = `${tool.name} · ${Number(depth.toFixed(1))} mm pocket depth`;
+          depthReadout.classList.remove("hidden");
+        }
       });
     }
 
@@ -3753,6 +3891,7 @@
         drawIsoLayout();
         return;
       }
+      document.getElementById("pocketDepthReadout").classList.add("hidden");
       resizeCanvas();
       const dpr = window.devicePixelRatio || 1;
       const dw = Number(el.drawerW.value), dh = Number(el.drawerH.value);
@@ -3834,9 +3973,9 @@
     }
 
     function renderAll() {
+      updateAllOverlaps();
       renderToolList();
       renderLayoutItems();
-      updateAllOverlaps();
       drawLayout();
       const sel = getSelectedItem();
       el.rotInput.value = sel ? sel.rot.toFixed(0) : "0";
@@ -4370,58 +4509,20 @@
     }
 
     function triangulatePolygonWithHoles(outerPts, holeLoops) {
-      if (!outerPts || outerPts.length < 3) return [];
-      let outerNode = ecLinkedList(outerPts, true);
-      if (!outerNode || outerNode.next === outerNode.prev) return [];
-      const holeQueue = [];
-      (holeLoops || []).forEach(loop => {
-        if (!loop || loop.length < 3) return;
-        const list = ecLinkedList(loop, false);
-        if (list) {
-          if (list === list.next) list.steiner = true;
-          holeQueue.push(ecGetLeftmost(list));
-        }
-      });
-      holeQueue.sort((a, b) => a.x - b.x);
-      holeQueue.forEach(h => { outerNode = ecEliminateHole(h, outerNode); });
-      outerNode = ecFilterPoints(outerNode);
-      const triangles = [];
-      ecEarcutLinked(outerNode, triangles, 0);
-      return triangles;
+      const loops=[outerPts,...(holeLoops||[])],points=loops.flat(),holes=[];let n=outerPts.length;
+      for(const h of holeLoops||[]){holes.push(n);n+=h.length;}
+      const indices=earcut(points.flatMap(p=>[p.x,p.y]),holes,2),out=[];
+      for(let i=0;i<indices.length;i+=3){const t=indices.slice(i,i+3).map(k=>points[k]);if(signedArea2(t)<0)t.reverse();out.push(t);}return out;
     }
 
-    // Insert midpoints along long edges, nudged 2 microns inward: exact collinear
-    // points would be filtered away by the triangulator, reopening T-junctions
-    // against the wall extrusion, and 0.002 mm is far below print resolution.
+
     function densifyLoop(loop, maxStep) {
-      const inwardSign = signedArea2(loop) > 0 ? 1 : -1;
-      const out = [];
-      for (let i = 0; i < loop.length; i++) {
-        const a = loop[i], b = loop[(i + 1) % loop.length];
-        out.push(a);
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
-        const n = Math.floor(len / maxStep);
-        if (!n) continue;
-        const nx = -(b.y - a.y) / len * inwardSign;
-        const ny = (b.x - a.x) / len * inwardSign;
-        for (let k = 1; k <= n; k++) {
-          const t = k / (n + 1);
-          // varying inward nudge (0.03-0.08 mm, invisible in print) so inserted points are
-          // never collinear: exact collinearity gets them filtered by the triangulator, and
-          // micron-scale nudges create degenerate slivers that poison face refinement
-          const s = Math.sin(k * 12.9898 + i * 78.233) * 43758.5453;
-          const d = 0.03 + 0.05 * (s - Math.floor(s));
-          out.push({ x: a.x + (b.x - a.x) * t + nx * d, y: a.y + (b.y - a.y) * t + ny * d });
-        }
-      }
-      return out;
+      // Flat STL faces need no random boundary perturbation or interior grid.
+      let out=toOpenLoop(loop, .00001);let changed=true;
+      while(changed&&out.length>3){changed=false;out=out.filter((p,i)=>{const a=out[(i+out.length-1)%out.length],b=out[(i+1)%out.length];const remove=Math.abs((p.x-a.x)*(b.y-p.y)-(p.y-a.y)*(b.x-p.x))<1e-9;if(remove)changed=true;return !remove;});}return out;
     }
 
-    // Bowyer-Watson Delaunay mesh over the exact loop vertices plus an interior point
-    // grid, filtered to the face region. Loop edges are kept short relative to their
-    // clearance (see densifyLoop call sites), so they all appear as Delaunay edges and
-    // the face boundary matches the wall extrusions vertex-for-vertex. Returns null if
-    // any boundary edge is missing (degenerate clearances) so callers can fall back.
+
     function delaunayFaceMesh(outer, holes, maxEdge) {
       const loops = [outer, ...(holes || [])];
       const pts = [];
@@ -4634,6 +4735,61 @@
       return Math.abs(vol) / 6;
     }
 
+// Geometry checks run on the serialized Float32 STL, not just the source polygons.
+function readStlTriangles(buffer) {
+  const v=new DataView(buffer), out=[];
+  for(let i=0;i<v.getUint32(80,true);i++) {
+    const t=[]; for(let j=0;j<3;j++){const k=84+i*50+12+j*12;t.push({x:v.getFloat32(k,true),y:v.getFloat32(k+4,true),z:v.getFloat32(k+8,true)});}out.push(t);
+  } return out;
+}
+function meshAudit(buffer, expectedBodies=1) {
+  const tris=readStlTriangles(buffer), vertices=new Map(), edges=new Map(), parent=tris.map((_,i)=>i), incident=[];
+  const find=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
+  const ids=p=>{const key=[p.x,p.y,p.z].map(v=>v.toFixed(5)).join(',');if(!vertices.has(key)){vertices.set(key,vertices.size);incident.push([]);}return vertices.get(key);};
+  let degenerate=0,volume=0;
+  tris.forEach((t,i)=>{const vs=t.map(ids),[a,b,c]=t;
+    const ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z,vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
+    if(new Set(vs).size<3 || Math.hypot(uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx)<1e-9)degenerate++;
+    volume+=(a.x*(b.y*c.z-b.z*c.y)+a.y*(b.z*c.x-b.x*c.z)+a.z*(b.x*c.y-b.y*c.x))/6;
+    vs.forEach((v,k)=>incident[v].push([vs[(k+1)%3],vs[(k+2)%3]]));
+    for(let k=0;k<3;k++){const a=vs[k],b=vs[(k+1)%3],key=a<b?a+','+b:b+','+a;
+      if(!edges.has(key))edges.set(key,[]);const list=edges.get(key);if(list.length)parent[find(i)]=find(list[0].i);list.push({i,dir:a<b?1:-1});}
+  });
+  let openEdges=0,nonManifoldEdges=0,inconsistentEdges=0,nonManifoldVertices=0;
+  edges.forEach(e=>{if(e.length===1)openEdges++;else if(e.length!==2)nonManifoldEdges++;else if(e[0].dir===e[1].dir)inconsistentEdges++;});
+  // A closed vertex link must be one cycle, not two shells touching at a point.
+  incident.forEach(pairs=>{const graph=new Map();for(const [a,b] of pairs){if(!graph.has(a))graph.set(a,[]);if(!graph.has(b))graph.set(b,[]);graph.get(a).push(b);graph.get(b).push(a);}const seen=new Set(),q=[graph.keys().next().value];while(q.length){const a=q.pop();if(seen.has(a))continue;seen.add(a);for(const b of graph.get(a)||[])if(!seen.has(b))q.push(b);}if(seen.size!==graph.size||[...graph.values()].some(v=>v.length!==2))nonManifoldVertices++;});
+  const bodies=new Set(tris.map((_,i)=>find(i))).size;
+  return {passed:!openEdges&&!nonManifoldEdges&&!inconsistentEdges&&!nonManifoldVertices&&!degenerate&&bodies===expectedBodies&&volume>0,openEdges,nonManifoldEdges,inconsistentEdges,nonManifoldVertices,degenerate,bodies,volume,facets:tris.length, openEdgePoints:[...edges].filter(e=>e[1].length===1).slice(0,12).map(e=>e[0].split(",").map(i=>[...vertices.keys()][Number(i)]))};
+}
+function areaCentroid(loop) {
+  let a=0,x=0,y=0;for(let i=0;i<loop.length;i++){const p=loop[i],q=loop[(i+1)%loop.length],c=p.x*q.y-q.x*p.y;a+=c;x+=(p.x+q.x)*c;y+=(p.y+q.y)*c;}
+  return {x:x/(3*a),y:y/(3*a),area:Math.abs(a)/2};
+}
+function checkPocketOrientation(buffer, floors, drawer) {
+  const tris=readStlTriangles(buffer);
+  const checks=floors.map(f=>{const expected=areaCentroid(f.loop);let area=0,x=0,y=0;
+    for(let i=f.start;i<f.end;i++){const [a,b,c]=tris[i],v=Math.abs((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x))/2;area+=v;x+=v*(a.x+b.x+c.x)/3;y+=v*(a.y+b.y+c.y)/3;}
+    const actual={x:x/area,y:y/area},target={x:expected.x,y:drawer.h-expected.y};const errorMm=Math.hypot(actual.x-target.x,actual.y-target.y),areaError=Math.abs(area-expected.area)/expected.area;
+    return {expected:target,actual,errorMm,areaError,holes:f.holes,passed:area>0&&errorMm<.1&&areaError<.005};});
+  if(checks.some(c=>!c.passed))throw Error('STL/DXF pocket orientation check failed. Export blocked. '+JSON.stringify(checks.filter(c=>!c.passed)));
+  return {passed:true,checked:checks.length,maxErrorMm:Math.max(0,...checks.map(c=>c.errorMm)),pockets:checks};
+}
+function conformMesh(tris) {
+  // Earcut may remove a collinear boundary vertex introduced at a hole bridge.
+  // Split the corresponding face edge at that existing vertex, preserving geometry.
+  const key=p=>[p.x,p.y,p.z].map(v=>v.toFixed(7)).join(',');
+  for(let pass=0;pass<3;pass++) {
+    const edges=new Map(),verts=new Map();tris.forEach((t,i)=>t.forEach((a,k)=>{const b=t[(k+1)%3],ka=key(a),kb=key(b),ek=ka<kb?ka+'|'+kb:kb+'|'+ka;verts.set(ka,a);if(!edges.has(ek))edges.set(ek,[]);edges.get(ek).push({i,k,a,b});}));
+    const open=[...edges.values()].filter(e=>e.length===1).map(e=>e[0]);if(!open.length)return tris;
+    const candidates=new Map();open.forEach(e=>{candidates.set(key(e.a),e.a);candidates.set(key(e.b),e.b);});const split=new Map();
+    for(const e of open){if(split.has(e.i))continue;const dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,dz=e.b.z-e.a.z,l2=dx*dx+dy*dy+dz*dz,points=[];if(!l2)continue;
+      for(const p of candidates.values()){const u=((p.x-e.a.x)*dx+(p.y-e.a.y)*dy+(p.z-e.a.z)*dz)/l2;if(u<1e-7||u>1-1e-7)continue;if(Math.hypot(p.x-e.a.x-u*dx,p.y-e.a.y-u*dy,p.z-e.a.z-u*dz)<5e-5)points.push({p,u});}
+      if(points.length){points.sort((a,b)=>a.u-b.u);const chain=[e.a,...points.map(p=>p.p),e.b],c=tris[e.i][(e.k+2)%3];split.set(e.i,chain.slice(1).map((b,i)=>[chain[i],b,c]));}}
+    if(!split.size)return tris;tris=tris.flatMap((t,i)=>split.get(i)||[t]);
+  }return tris;
+}
+
     function makePrintableShellStl(cutEntities, drawer, settings) {
       const thickness = Math.max(3, Number(settings.thickness) || 18);
       const skin = Math.max(0.8, Number(settings.wall) || 2);
@@ -4738,7 +4894,8 @@
         });
       }
 
-      const triangles = [];
+      let triangles = [];
+      const pocketFloors = [];
       const pushFace = (tris, z, flip) => {
         tris.forEach(([a, b, c]) => {
           const A = { x: a.x, y: a.y, z }, B = { x: b.x, y: b.y, z }, C = { x: c.x, y: c.y, z };
@@ -4757,8 +4914,7 @@
         }
       };
       const meshFace = (outer, holes) => {
-        const dm = delaunayFaceMesh(outer, holes, faceMeshSize);
-        return dm || refineFaceTriangulation(triangulatePolygonWithHoles(outer, holes), faceMeshSize);
+        return triangulatePolygonWithHoles(outer, holes);
       };
 
       const labelLoops = (settings.labelLoops || []).filter(loop => loop && loop.length >= 3).map(loop => {
@@ -4844,7 +5000,9 @@
           const floor = (node.emboss || []).length
             ? triangulatePolygonWithHoles(node.loop, holes)
             : meshFace(node.loop, holes);
+          const start = triangles.length;
           pushFace(floor, node.floorZ, false);
+          if(node.kind === "cut") pocketFloors.push({loop:node.loop,holes:holes.map(h=>areaCentroid(h)),start,end:triangles.length});
           addWalls(node.loop, node.floorZ, thickness, false);
           (node.emboss || []).forEach(loop => {
             pushFace(triangulatePolygonWithHoles(loop, []), node.floorZ + 0.6, false);
@@ -4861,29 +5019,19 @@
         addWalls(node.loop, z0, thickness, true);
       });
 
-      if ((settings.labelLoops || []).length && !settings._nolabel) {
-        const edgeUse = new Map();
-        const pk = p => p.x.toFixed(3) + "," + p.y.toFixed(3) + "," + p.z.toFixed(3);
-        triangles.forEach(t => {
-          for (let e = 0; e < 3; e++) {
-            const a = pk(t[e]), b = pk(t[(e + 1) % 3]);
-            const key = a < b ? a + "|" + b : b + "|" + a;
-            edgeUse.set(key, (edgeUse.get(key) || 0) + 1);
-          }
-        });
-        let openEdges = 0;
-        edgeUse.forEach(n => { if (n !== 2) openEdges++; });
-        if (openEdges) {
-          const again = makePrintableShellStl(cutEntities, drawer, Object.assign({}, settings, { labelLoops: [], _nolabel: true }));
-          again.labelDropped = true;
-          return again;
-        }
-      }
-
       const mm3 = meshVolumeMm3(triangles);
-      const grams = mm3 / 1000 * 1.24;
+
       const name = String(settings.name || "snapinset");
-      const content = makeBinaryStl(triangles, name + "_shell");
+      // Convert canvas Y-down to the same Y-up frame used by DXF, once.
+      const cadTriangles=triangles.map(t=>[t[0],t[2],t[1]].map(p=>({x:p.x,y:drawer.h-p.y,z:p.z})));
+      const kept=[0];cadTriangles.forEach(t=>kept.push(kept[kept.length-1]+(facetNormal(...t)?1:0)));
+      const orientation=checkPocketOrientation(makeBinaryStl(cadTriangles,name),pocketFloors.map(f=>({...f,start:kept[f.start],end:kept[f.end]})),drawer);
+      const content=makeBinaryStl(conformMesh(readStlTriangles(makeBinaryStl(cadTriangles,name))),name+"_shell");
+      const manifold=meshAudit(content);
+      if(!manifold.passed)throw Error(name+' is not a single manifold body: '+JSON.stringify(manifold));
+      const estimate=printEstimator.estimatePrintedMesh(content,settings.profile);
+      const grams=estimate.grams;
+      const labelDropped=!!(settings.labelLoops||[]).length&&!emboss.length;
       return {
         content,
         cells: cellCount,
@@ -4894,7 +5042,7 @@
         wall: skin,
         volume: mm3,
         grams,
-        labeled: emboss.length
+        labeled: emboss.length, labelDropped, manifold, orientation, estimate
       };
     }
 
@@ -4953,7 +5101,16 @@
       const spacing = Number.isFinite(data.report.minGap) ? `${data.report.minGap.toFixed(1)} mm min gap` : "Spacing not measured";
       el.exportSummary.textContent = `${data.drawer.w} x ${data.drawer.h} mm drawer | ${data.ents.length} tool cutout(s) | ${spacing} | finger pulls included`;
       el.exportModal.classList.remove("hidden");
-      drawExportPreview(data.ents, data.drawer);
+      const names = document.getElementById("exportToolNames");
+      names.replaceChildren();
+      const named = data.ents.map((ent, index) => {
+        const name = getTool(state.items[index]?.toolId)?.name || ent.layer;
+        const li = document.createElement("li");
+        li.textContent = name;
+        names.appendChild(li);
+        return { ...ent, name };
+      });
+      drawExportPreview(named, data.drawer);
     }
 
     function hideExportPreview() {
@@ -4963,11 +5120,21 @@
       state.pendingLayoutName = null;
     }
 
-    function drawExportPreview(ents, drawer) {
-      const canvas = el.exportPreviewCanvas;
+    function drawOutputPreview() {
+      const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
+      const cuts = state.items.map(item => {
+        const tool = getTool(item.toolId);
+        return { name: tool.name, points: combinedLocalPoints(item).map(p => transformPoint(p, item, tool)) };
+      });
+      const summary = document.getElementById("outputPreviewSummary");
+      summary.textContent = `${drawer.w} × ${drawer.h} mm · ${cuts.length} tool cutout${cuts.length === 1 ? "" : "s"}`;
+      drawExportPreview(cuts, drawer, document.getElementById("outputPreviewCanvas"));
+    }
+
+    function drawExportPreview(ents, drawer, canvas = el.exportPreviewCanvas) {
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const cssW = 760;
-      const cssH = 420;
+      const cssW = Math.min(850, canvas.parentElement.clientWidth || 760);
+      const cssH = Math.max(210, Math.min(450, Math.round(cssW * 0.66)));
       canvas.width = cssW * dpr;
       canvas.height = cssH * dpr;
       const pctx = canvas.getContext("2d");
@@ -4975,7 +5142,8 @@
       pctx.clearRect(0, 0, cssW, cssH);
       pctx.fillStyle = "#ffffff";
       pctx.fillRect(0, 0, cssW, cssH);
-      const pad = 24;
+      const pad = cssW < 450 ? 14 : 24;
+      if (drawer.w <= 0 || drawer.h <= 0) return;
       const scale = Math.min((cssW - pad * 2) / drawer.w, (cssH - pad * 2) / drawer.h);
       const ox = (cssW - drawer.w * scale) / 2;
       const oy = (cssH - drawer.h * scale) / 2;
@@ -5003,7 +5171,27 @@
         pctx.beginPath();
         pctx.moveTo(ox + ent.points[0].x * scale, oy + ent.points[0].y * scale);
         ent.points.slice(1).forEach(p => pctx.lineTo(ox + p.x * scale, oy + p.y * scale));
+        pctx.closePath();
         pctx.stroke();
+      });
+      pctx.font = "600 12px Inter, sans-serif";
+      pctx.textAlign = "center";
+      pctx.textBaseline = "middle";
+      ents.forEach((ent, index) => {
+        if (!ent.name || !ent.points.length) return;
+        const bounds = bboxPoints(ent.points);
+        const centerX = ox + (bounds.x0 + bounds.x1) * scale / 2;
+        const centerY = oy + (bounds.y0 + bounds.y1) * scale / 2;
+        const maxWidth = (bounds.x1 - bounds.x0) * scale;
+        const label = `${index + 1} · ${ent.name}`;
+        const text = pctx.measureText(label).width + 10 <= maxWidth ? label : String(index + 1);
+        const labelWidth = pctx.measureText(text).width + 8;
+        const x = Math.max(labelWidth / 2, Math.min(cssW - labelWidth / 2, centerX));
+        const y = Math.max(10, Math.min(cssH - 10, centerY));
+        pctx.fillStyle = "#F7F1E6";
+        pctx.fillRect(x - labelWidth / 2, y - 9, labelWidth, 18);
+        pctx.fillStyle = "#1B4532";
+        pctx.fillText(text, x, y);
       });
     }
 
@@ -5026,9 +5214,12 @@
         ecSplitPolygon, ecFilterPoints, ecPointInTriangle, ecIsEar, ecCureLocalIntersections, ecSplitEarcut,
         ecEarcutLinked, ecGetLeftmost, ecSectorContainsSector, ecFindHoleBridge, ecEliminateHole, ecLinkedList,
         triangulatePolygonWithHoles, densifyLoop, delaunayFaceMesh, refineFaceTriangulation, traceMaskLoops,
+        readStlTriangles, meshAudit, areaCentroid, checkPocketOrientation, conformMesh,
         meshVolumeMm3, makePrintableShellStl
       ];
       const src = [
+        "("+installEarcut.toString()+")();",
+        "const printEstimator=("+createPrintEstimator.toString()+")();",
         "const SEGMENTS = " + JSON.stringify(SEGMENTS) + ";",
         "let ecNodeSeq = 0;",
         fns.map(fn => fn.toString()).join("\n"),
@@ -5047,82 +5238,19 @@
     }
 
     function buildShellStl(cuts, drawer, settings) {
-      return new Promise(resolve => {
+      return new Promise((resolve,reject)=>{
         let worker;
-        try {
-          worker = new Worker(stlWorkerUrl());
-        } catch (err) {
-          console.warn("STL worker failed to start", err && err.message ? err.message : err);
-          const stl = makePrintableShellStl(cuts, drawer, settings);
-          stl.threaded = false;
-          resolve(stl);
-          return;
+        try {worker=new Worker(stlWorkerUrl());} catch(err) {
+          try{resolve({...makePrintableShellStl(cuts,drawer,settings),threaded:false});}catch(e){reject(e);}return;
         }
-        let settled = false;
-        const finish = (stl) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          worker.terminate();
-          resolve(stl);
-        };
-        const timer = setTimeout(() => {
-          const stl = makePrintableShellStl(cuts, drawer, settings);
-          stl.threaded = false;
-          finish(stl);
-        }, 120000);
-        worker.onmessage = ev => {
-          if (ev.data && ev.data.ok && ev.data.stl) finish(ev.data.stl);
-          else {
-            console.warn("STL worker reported", ev.data && ev.data.error);
-            const stl = makePrintableShellStl(cuts, drawer, settings);
-            stl.threaded = false;
-            finish(stl);
-          }
-        };
-        worker.onerror = ev => {
-          console.warn("STL worker error", ev.message || ev);
-          const stl = makePrintableShellStl(cuts, drawer, settings);
-          stl.threaded = false;
-          finish(stl);
-        };
-        worker.postMessage({ cuts, drawer, settings });
+        const timer=setTimeout(()=>{worker.terminate();reject(Error('Mesh generation timed out.'));},120000);
+        const finish=()=>{clearTimeout(timer);worker.terminate();};
+        worker.onmessage=ev=>{finish();ev.data.ok?resolve(ev.data.stl):reject(Error(ev.data.error));};
+        worker.onerror=ev=>{finish();reject(Error(ev.message||'Mesh worker failed'));};
+        worker.postMessage({cuts,drawer,settings});
       });
     }
 
-    async function exportPrintableStl() {
-      const data = buildLayoutExportData();
-      if (data.error) {
-        showNotice(data.error.replace("drawer DXF export", "3D STL export"));
-        return;
-      }
-      const settings = {
-        thickness: Number(el.stlThicknessInput.value),
-        wall: Number(el.stlWallInput.value),
-        pitch: Number(el.stlResolutionInput.value),
-        name: safeFileBase(cleanProjectName()),
-        chamfer: 0.3
-      };
-      showBusy("Building 3D printable STL...", "Skin on the bed, pockets open upward.", 12);
-      await nextFrame();
-      try {
-        const stl = await buildShellStl(data.ents, data.drawer, settings);
-        updateBusy("Building 3D printable STL...", `${stl.facets.toLocaleString()} facets, about ${Math.round(stl.grams)} g.`, 86);
-        await nextFrame();
-        download(`${safeFileBase(cleanProjectName())}_shell.stl`, stl.content, "model/stl");
-        if (el.massReadout) {
-          el.massReadout.textContent = `~${Math.max(1, Math.round(stl.grams))} g PLA`;
-          el.massReadout.dataset.threaded = stl.threaded ? "1" : "0";
-          el.massReadout.dataset.grams = String(Math.round(stl.grams));
-        }
-        const pitchNote = stl.adaptedPitch ? ` Cavity detail widened to ${stl.pitch.toFixed(2)} mm so the board would fit.` : "";
-        showNotice(`Exported STL. Skin is on the bed. About ${stl.grams.toFixed(0)} g of PLA, from the mesh volume (estimate).${pitchNote}`);
-      } catch (err) {
-        showNotice("STL export blocked: " + err.message);
-      } finally {
-        hideBusy();
-      }
-    }
 
     function bedLimits() {
       const bedW = Math.max(80, Number(el.bedW.value) || 256);
@@ -5510,102 +5638,6 @@
       return `About ${nx * ny} tiles on a ${limits.bedW} × ${limits.bedH} mm bed. Seams get a dovetail key.`;
     }
 
-    async function exportTiles() {
-      const data = buildLayoutExportData();
-      if (data.error) {
-        showNotice(data.error.replace("drawer DXF export", "tile export"));
-        return;
-      }
-      const limits = bedLimits();
-      if (!(limits.maxW > 30) || !(limits.maxH > 30)) {
-        showNotice("Tile export blocked: the bed is smaller than a tile plus its dovetail.", "error");
-        return;
-      }
-      const clearance = keyClearanceMm();
-      const polys = data.ents.map(ent => openLoop(ent.points)).filter(loop => loop.length >= 3);
-      const xCuts = planCuts(data.drawer.w, limits.maxW, pos => crossingLength(polys, "x", pos));
-      const yCuts = planCuts(data.drawer.h, limits.maxH, pos => crossingLength(polys, "y", pos));
-      const xs = [0, ...xCuts, data.drawer.w];
-      const ys = [0, ...yCuts, data.drawer.h];
-      const naive = equalCuts(data.drawer.w, limits.maxW).reduce((n, c) => n + crossingLength(polys, "x", c), 0)
-        + equalCuts(data.drawer.h, limits.maxH).reduce((n, c) => n + crossingLength(polys, "y", c), 0);
-      const chosen = xCuts.reduce((n, c) => n + crossingLength(polys, "x", c), 0)
-        + yCuts.reduce((n, c) => n + crossingLength(polys, "y", c), 0);
-      const pad = 0.2;
-      const files = [];
-      const notes = [];
-      showBusy("Splitting the board into tiles...", `${xs.length - 1} × ${ys.length - 1} tiles.`, 8);
-      await nextFrame();
-      try {
-        for (let row = 0; row < ys.length - 1; row++) {
-          for (let col = 0; col < xs.length - 1; col++) {
-            const x0 = xs[col], x1 = xs[col + 1], y0 = ys[row], y1 = ys[row + 1];
-            const label = tileLabel(col, row);
-            updateBusy("Splitting the board into tiles...", `Tile ${label}.`, 10 + (80 * (row * (xs.length - 1) + col)) / ((xs.length - 1) * (ys.length - 1)));
-            await nextFrame();
-            const localCuts = [];
-            data.ents.forEach(ent => {
-              const clipped = clipToRect(openLoop(ent.points), x0 + pad, y0 + pad, x1 - pad, y1 - pad);
-              if (clipped.length < 3 || Math.abs(signedArea2(clipped)) / 2 < 1) return;
-              localCuts.push({
-                points: clipped.map(p => ({ x: p.x - x0, y: p.y - y0 })),
-                depth: ent.depth
-              });
-            });
-            const rightKeys = col < xs.length - 2 ? keyCenters(y0, y1, blockedOnSeam(polys, "x", x1, y0, y1)).map(y => y - y0) : [];
-            const topKeys = row < ys.length - 2 ? keyCenters(x0, x1, blockedOnSeam(polys, "y", y1, x0, x1)).map(x => x - x0) : [];
-            const leftSockets = col > 0 ? keyCenters(y0, y1, blockedOnSeam(polys, "x", x0, y0, y1)).map(y => y - y0) : [];
-            const bottomSockets = row > 0 ? keyCenters(x0, x1, blockedOnSeam(polys, "y", y0, x0, x1)).map(x => x - x0) : [];
-            const w = x1 - x0, h = y1 - y0;
-            const outline = [];
-            appendSeam(outline, { x: 0, y: 0 }, { x: w, y: 0 }, bottomSockets, "socket", "x", -1, clearance);
-            appendSeam(outline, { x: w, y: 0 }, { x: w, y: h }, rightKeys, "key", "y", 1, clearance);
-            appendSeam(outline, { x: w, y: h }, { x: 0, y: h }, topKeys, "key", "x", 1, clearance);
-            appendSeam(outline, { x: 0, y: h }, { x: 0, y: 0 }, leftSockets, "socket", "y", -1, clearance);
-            if (Math.hypot(outline[0].x - outline[outline.length - 1].x, outline[0].y - outline[outline.length - 1].y) < 1e-6) outline.pop();
-            if (outlineSelfCrosses(outline)) throw new Error(`Tile ${label} dovetail crossed itself. Move the tools off the seam and try again.`);
-            const bounds = loopBounds(outline);
-            if (bounds.w > limits.usableW + 0.3 || bounds.h > limits.usableH + 0.3) {
-              throw new Error(`Tile ${label} is ${bounds.w.toFixed(0)} × ${bounds.h.toFixed(0)} mm, larger than the ${limits.usableW.toFixed(0)} × ${limits.usableH.toFixed(0)} mm usable bed.`);
-            }
-            const stl = await buildShellStl(localCuts, { w, h }, {
-              thickness: Number(el.stlThicknessInput.value),
-              wall: Number(el.stlWallInput.value),
-              rim: SEAM_RIM,
-              pitch: Number(el.stlResolutionInput.value),
-              chamfer: 0.3,
-              outline,
-              labelLoops: labelLoopsFor(label, SEAM_RIM + 4, SEAM_RIM + 4),
-              name: "tile_" + label
-            });
-            files.push({ name: `tile-${label}.stl`, data: stl.content });
-            notes.push(`${label}  tile-${label}.stl  ${w.toFixed(1)} × ${h.toFixed(1)} mm body, footprint ${bounds.w.toFixed(1)} × ${bounds.h.toFixed(1)} mm, label ${stl.labelDropped ? "skipped" : (stl.labeled || 0)}`);
-          }
-        }
-        updateBusy("Splitting the board into tiles...", "Clearance coupon.", 92);
-        await nextFrame();
-        files.push({ name: "clearance-coupon.stl", data: await clearanceCoupon(clearance) });
-        const note = [
-          "SnapInset tiles",
-          `Bed ${limits.bedW} × ${limits.bedH} mm, margin ${limits.margin} mm/side, usable ${limits.usableW.toFixed(0)} × ${limits.usableH.toFixed(0)} mm.`,
-          `Dovetail keys are ${KEY_NECK} mm at the neck, ${KEY_HEAD} mm at the head, ${KEY_DEPTH} mm deep. Clearance ${clearance.toFixed(2)} mm per side.`,
-          `Each tile keeps a ${SEAM_RIM} mm seam wall so the ${KEY_DEPTH} mm key stays in solid plastic. The wall is wider than 5 mm for that reason.`,
-          `Seams cross ${chosen.toFixed(1)} mm of pocket. An even split on the same tile count would cross ${naive.toFixed(1)} mm.`,
-          "Print the clearance coupon and press the key into the socket before printing the set.",
-          "Tile numbers are raised 0.6 mm on the cavity floor.",
-          "",
-          ...notes
-        ].join("\n");
-        files.push({ name: "tiles.txt", data: new TextEncoder().encode(note) });
-        download(`${safeFileBase(cleanProjectName())}_tiles.zip`, zipStore(files), "application/zip");
-        const better = naive > chosen + 0.5 ? ` Seams cross ${chosen.toFixed(0)} mm of pocket, against ${naive.toFixed(0)} mm for an even split.` : "";
-        showNotice(`Exported ${notes.length} tile${notes.length === 1 ? "" : "s"} plus a clearance coupon.${better}`);
-      } catch (err) {
-        showNotice("Tile export blocked: " + err.message, "error");
-      } finally {
-        hideBusy();
-      }
-    }
 
     function validateLayout() {
       const dw = Number(el.drawerW.value);
@@ -5669,28 +5701,103 @@
       };
     }
 
-    function estimateFilamentGrams() {
-      const w = Math.max(0, Number(el.drawerW.value) || 0);
-      const h = Math.max(0, Number(el.drawerH.value) || 0);
-      const t = Math.max(0, Number(el.stlThicknessInput.value) || 0);
-      const skin = Math.min(t, Math.max(0, Number(el.stlWallInput.value) || 0));
-      if (skin <= 0 || t <= skin) return Math.max(0, w * h * t / 1000 * 1.24);
-      let pocketVoid = 0;
-      let pocketArea = 0;
-      state.items.forEach(item => {
-        const tool = getTool(item.toolId);
-        if (!tool) return;
-        const area = Math.abs(polygonArea(tool.points));
-        pocketArea += area;
-        const depth = Math.min(t - skin, Math.max(0, Number(item.pocketDepth || tool.pocketDepth) || 15));
-        pocketVoid += area * depth;
-      });
-      const innerW = Math.max(0, w - 2 * skin);
-      const innerH = Math.max(0, h - 2 * skin);
-      const cavityArea = Math.max(0, innerW * innerH - pocketArea);
-      const cavityVoid = cavityArea * (t - skin);
-      return Math.max(0, (w * h * t - pocketVoid - cavityVoid) / 1000 * 1.24);
+    function printProfile() {
+      const values={};for(const key of Object.keys(printEstimator.defaults))values[key]=document.getElementById('print-'+key)?.value;
+      return printEstimator.normalize(values);
     }
+    function printSettings() {return {thickness:Number(el.stlThicknessInput.value),wall:Number(el.stlWallInput.value),pitch:Number(el.stlResolutionInput.value),chamfer:.3,profile:printProfile()};}
+    function planTileExport(data) {
+      const limits=bedLimits(),clearance=keyClearanceMm();
+      if(limits.maxW<=30||limits.maxH<=30)throw Error('Printer bed is too small for the tile keys.');
+      const polys=data.ents.map(ent=>openLoop(ent.points)),xCuts=planCuts(data.drawer.w,limits.maxW,pos=>crossingLength(polys,'x',pos)),yCuts=planCuts(data.drawer.h,limits.maxH,pos=>crossingLength(polys,'y',pos));
+      const xs=[0,...xCuts,data.drawer.w],ys=[0,...yCuts,data.drawer.h],jobs=[],pad=.2;
+      for(let row=0;row<ys.length-1;row++)for(let col=0;col<xs.length-1;col++) {
+        const x0=xs[col],x1=xs[col+1],y0=ys[row],y1=ys[row+1],w=x1-x0,h=y1-y0,label=tileLabel(col,row),cuts=[];
+        for(const ent of data.ents){const ring=openLoop(ent.points).map(p=>[p.x,p.y]);const pieces=polygonClipping.intersection([ring],[[[x0+pad,y0+pad],[x1-pad,y0+pad],[x1-pad,y1-pad],[x0+pad,y1-pad],[x0+pad,y0+pad]]]);
+          for(const piece of pieces){const loop=piece[0].slice(0,-1).map(p=>({x:p[0]-x0,y:p[1]-y0}));if(loop.length>=3&&Math.abs(signedArea2(loop))/2>=1)cuts.push({points:loop,depth:ent.depth});}}
+        const right=col<xs.length-2?keyCenters(y0,y1,blockedOnSeam(polys,'x',x1,y0,y1)).map(v=>v-y0):[];
+        const top=row<ys.length-2?keyCenters(x0,x1,blockedOnSeam(polys,'y',y1,x0,x1)).map(v=>v-x0):[];
+        const left=col>0?keyCenters(y0,y1,blockedOnSeam(polys,'x',x0,y0,y1)).map(v=>v-y0):[];
+        const bottom=row>0?keyCenters(x0,x1,blockedOnSeam(polys,'y',y0,x0,x1)).map(v=>v-x0):[];
+        const outline=[];
+        appendSeam(outline,{x:0,y:0},{x:w,y:0},bottom,'socket','x',-1,clearance);
+        appendSeam(outline,{x:w,y:0},{x:w,y:h},right,'key','y',1,clearance);
+        appendSeam(outline,{x:w,y:h},{x:0,y:h},top,'key','x',1,clearance);
+        appendSeam(outline,{x:0,y:h},{x:0,y:0},left,'socket','y',-1,clearance);outline.pop();
+        if(outlineSelfCrosses(outline))throw Error('Tile '+label+' has a crossing key outline.');const bounds=loopBounds(outline);
+        if(bounds.w>limits.usableW+.3||bounds.h>limits.usableH+.3)throw Error('Tile '+label+' exceeds the usable printer bed.');
+        jobs.push({label,cuts,drawer:{w,h},origin:{x:x0,y:data.drawer.h-y1},bounds,settings:{...printSettings(),rim:SEAM_RIM,outline,labelLoops:labelLoopsFor(label,SEAM_RIM+4,SEAM_RIM+4),name:'tile_'+label}});
+      }
+      return {jobs,limits,clearance};
+    }
+    function printModelKey(data) {return JSON.stringify([data.ents,data.drawer,printSettings(),bedLimits(),keyClearanceMm()]);}
+    async function preparePrintModels(data) {
+      const key=printModelKey(data);
+      state.printRequestedKey=key;
+      if(state.printModels?.key===key)return state.printModels;
+      if(state.printPreparing?.key===key)return state.printPreparing.promise;
+      const settings={...printSettings(),name:safeFileBase(cleanProjectName())},profile=printProfile();
+      let plan, tileError='';try{plan=planTileExport(data);}catch(e){tileError=e.message;plan={jobs:[]};}
+      const promise=(async()=>{
+        const board=await buildShellStl(data.ents,data.drawer,settings);
+        try{if(!tileError)for(const job of plan.jobs)job.stl=await buildShellStl(job.cuts,job.drawer,job.settings);}catch(e){tileError=e.message;}
+        const model={key,board,...plan,profile,tileError,whole:board.estimate,tiles:tileError?null:printEstimator.total(plan.jobs.map(j=>j.stl.estimate),profile)};
+        if(state.printRequestedKey===key && printModelKey(data)===key)state.printModels=model;
+        return model;
+      })();
+      state.printPreparing={key,promise};try{return await promise;}finally{if(state.printPreparing?.key===key)state.printPreparing=null;}
+    }
+    function printEstimates(){return state.printModels?{whole:state.printModels.whole,tiles:state.printModels.tiles,profile:state.printModels.profile}:null;}
+    function renderPrintEstimates() {
+      const target=document.getElementById('printEstimates');if(!target)return;
+      const model=state.printModels;
+      if(!model){el.massReadout.textContent='Estimate preparing…';target.textContent=state.printEstimateError||'Preparing one shared material and time estimate…';return;}
+      el.massReadout.textContent=printEstimator.format(model.whole);
+      target.innerHTML='<div><b>Whole board:</b> '+printEstimator.format(model.whole)+'</div><div><b>'+model.jobs.length+' tiles:</b> '+(model.tileError?'Unavailable: '+escapeHtml(model.tileError):printEstimator.format(model.tiles))+' (coupon excluded)</div><small>'+escapeHtml(printEstimator.describe(model.profile))+'</small><p>Rough estimate, not a slicer result. Allow ±20% material / ±35% time.</p>'+(Math.max(model.whole.hours,model.tiles?.hours||0)>12?'<p class="print-warning" role="status">Long print: more than 12 hours. Check your slicer and print the clearance coupon first.</p>':'');
+    }
+    function schedulePrintEstimates(report) {
+      if(state.view!=='export')return;
+      clearTimeout(schedulePrintEstimates.timer);
+      if(!report.ready){state.printRequestedKey=null;state.printModels=null;el.massReadout.textContent='Fix layout to estimate';return;}
+      const data={drawer:{w:Number(el.drawerW.value),h:Number(el.drawerH.value)},ents:state.items.map((item,i)=>({layer:'CUT_'+i,points:combinedLocalPoints(item).map(p=>transformPoint(p,item)),depth:Number(item.pocketDepth||getTool(item.toolId).pocketDepth)||15}))};
+      // Layer names do not affect material; use the same export data key as actions.
+      data.ents.forEach((ent,i)=>{const tool=getTool(state.items[i].toolId);ent.layer=('CUT_'+(i+1)+'_'+tool.name).replace(/[^A-Za-z0-9_]/g,'_').slice(0,40);});
+      const key=printModelKey(data);
+      if(state.printModels?.key===key){renderPrintEstimates();return;}
+      state.printRequestedKey=key;state.printModels=null;renderPrintEstimates();
+      schedulePrintEstimates.timer=setTimeout(()=>preparePrintModels(data).then(()=>{if(state.printRequestedKey!==key)return;state.printEstimateError='';renderPrintEstimates();}).catch(e=>{if(state.printRequestedKey!==key)return;state.printEstimateError=e.message;document.getElementById('printEstimates').textContent='Print preparation failed: '+e.message;showNotice(e.message,'error');}),350);
+    }
+    async function exportPrintableStl() {
+      const data=buildLayoutExportData();if(data.error){showNotice(data.error,'error');return;}
+      showBusy('Preparing verified STL…','Checking pocket orientation and manifold geometry.');
+      try{const model=await preparePrintModels(data),stl=model.board;
+        state.exportDiagnostics={...state.exportDiagnostics,board:{manifold:stl.manifold,orientation:stl.orientation,volume:stl.volume,estimate:stl.estimate}};
+        download(safeFileBase(cleanProjectName())+'_shell.stl',stl.content,'model/stl');renderPrintEstimates();
+        showNotice('Exported STL. '+printEstimator.format(model.whole)+'. '+(model.whole.hours>12?'Long print: over 12 hours.':''),model.whole.hours>12?'warn':'success');
+      }catch(e){showNotice('STL export blocked: '+e.message,'error');}finally{hideBusy();}
+    }
+    async function exportTiles() {
+      const data=buildLayoutExportData();if(data.error){showNotice(data.error,'error');return;}
+      showBusy('Preparing verified tiles…','Checking every body and pocket before zipping.');
+      try{const model=await preparePrintModels(data),files=[],notes=[],warnings=[],diagnostics=[];
+        if(model.tileError)throw Error(model.tileError);
+        for(const job of model.jobs){const {label,stl}=job;const audit=meshAudit(stl.content);if(!audit.passed)throw Error('Tile '+label+' failed the pre-zip manifold check.');
+          if(stl.labelDropped)warnings.push('Tile '+label+' label skipped: no safe location.');
+          files.push({name:'tile-'+label+'.stl',data:stl.content});
+          diagnostics.push({label,origin:job.origin,size:job.drawer,cuts:job.cuts,manifold:audit,orientation:stl.orientation,labeled:stl.labeled,estimate:stl.estimate});
+          notes.push(label+': CAD origin '+job.origin.x.toFixed(3)+', '+job.origin.y.toFixed(3)+' mm; '+job.bounds.w.toFixed(1)+' × '+job.bounds.h.toFixed(1)+' mm; '+printEstimator.format(stl.estimate)+'; manifold PASS; label '+(stl.labelDropped?'SKIPPED':stl.labeled));
+        }
+        const coupon=await clearanceCoupon(model.clearance),couponCheck=meshAudit(coupon,2);if(!couponCheck.passed)throw Error('Coupon failed manifold check.');
+        const couponEstimate=printEstimator.estimatePrintedMesh(coupon,model.profile);diagnostics.push({label:'coupon',manifold:couponCheck,estimate:couponEstimate});files.push({name:'clearance-coupon.stl',data:coupon});
+        state.exportDiagnostics={...state.exportDiagnostics,tiles:diagnostics,warnings};
+        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Estimates are approximate; use matching slicer settings. Allow ±20% material / ±35% time.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','STL and DXF use X-right, Y-up, Z-up. Place tiles at the CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon contains two intentionally separate watertight mating bodies. Print and test it first.','Each tile is one manifold body. Labels are raised 0.6 mm on cavity floors.',...notes,...warnings].join('\n');
+        files.push({name:'tiles.txt',data:new TextEncoder().encode(text)});files.push({name:'validation.json',data:new TextEncoder().encode(JSON.stringify(state.exportDiagnostics,null,2))});
+        download(safeFileBase(cleanProjectName())+'_tiles.zip',zipStore(files),'application/zip');renderPrintEstimates();
+        showNotice('Exported '+model.jobs.length+' verified tiles + coupon. '+printEstimator.format(model.tiles)+'. '+(model.tiles.hours>12?'Long print: over 12 hours. ':'')+warnings.join(' '),warnings.length||model.tiles.hours>12?'warn':'success');
+      }catch(e){showNotice('Tile export blocked: '+e.message,'error');}finally{hideBusy();}
+    }
+
+    function estimateFilamentGrams(){return state.printModels?.whole.grams||0;}
 
     function renderExportReport(report = validateLayout()) {
       if (!el.exportReport) return;
@@ -5717,7 +5824,8 @@
       const thickness = Number(el.stlThicknessInput.value) || 18;
       const wall = Number(el.stlWallInput.value) || 2;
       if (el.boardMeta) el.boardMeta.textContent = `${thickness} mm board · ${wall} mm wall`;
-      if (el.massReadout) el.massReadout.textContent = `~${Math.max(1, Math.round(estimateFilamentGrams()))} g PLA`;
+      if (el.massReadout) el.massReadout.textContent = state.printModels ? printEstimator.format(state.printModels.whole) : "Open Export for estimates";
+      schedulePrintEstimates(report);
       if (el.tileReadout) el.tileReadout.textContent = describeTiles(bedLimits());
       if (el.arrangeHint) {
         el.arrangeHint.textContent = overlapIssues[0]
@@ -5741,6 +5849,7 @@
       showNotice(`Success: exported ${tool.name} as one contour DXF.`);
     }
 
+    document.querySelectorAll("[id^=print-]").forEach(input=>input.addEventListener("input",()=>{state.printModels=null;renderExportReport();scheduleAutosave();}));
     el.fileInput.addEventListener("change", () => {
       state.pendingFiles = Array.from(el.fileInput.files || []);
       setStatus(`${state.pendingFiles.length} new image(s) ready for contour detection.`);
@@ -5768,12 +5877,14 @@
       }
     });
 
-    el.acceptAllContours.addEventListener("click", () => {
+    function acceptAllContours() {
+      if (!nextUnacceptedTool()) return;
       state.tools.forEach(tool => { tool.accepted = true; });
+      if (state.previewToolId) hidePreview();
       addAcceptedToolsToDrawer();
-      showPanel("review");
       showNotice(`${state.tools.length} contour(s) accepted and added to the drawer.`);
-    });
+    }
+    el.acceptAllContours.addEventListener("click", acceptAllCaptureContours);
 
     el.reviewNextContour.addEventListener("click", () => {
       const tool = nextUnacceptedTool();
@@ -5834,36 +5945,50 @@
         setStatus("Choose one or more images first.");
         return;
       }
-      if (el.processBtn.disabled) return;
-      el.processBtn.disabled = true;
+      if (detectPending.running) return;
+      detectPending.running = true;
       showBusy("Detecting tools...", "Finding the paper and measuring each outline.");
       try {
         state.lastArrangeReport = null;
         const batch = state.pendingFiles.slice();
-        let added = 0;
+        const batchKind = el.batchCaptureKind.value;
+        const batchExpected = captureMeasurement(el.batchCaptureExpected.value);
+        const autoAccept = el.batchCaptureAuto.checked;
+        let added = 0, automatic = 0;
         for (let i = 0; i < batch.length; i++) {
           setStatus(`Processing ${i + 1} of ${batch.length}: ${batch[i].name}`);
           el.busyDetail.textContent = batch[i].name;
           state.files.push(batch[i]);
           const sourceIndex = state.files.length - 1;
           const found = await ingestPhoto(batch[i], sourceIndex);
-          found.forEach(tool => state.tools.push(tool));
+          for (const tool of found) {
+            tool.capture.kind = batchKind;
+            tool.capture.expectedLength = batchExpected;
+            if (autoAccept && checkCaptureContour(tool).canAutoAccept) {
+              tool.accepted = true;
+              automatic++;
+            }
+            state.tools.push(tool);
+          }
           added += found.length;
           if (found.length) announceScale(found);
         }
         state.pendingFiles = [];
         el.fileInput.value = "";
+        if (automatic) addAcceptedToolsToDrawer();
         const next = nextUnacceptedTool();
-        if (next) {
-          showPanel("review");
-          showPreview(next);
+        if (next) showPreview(next);
+        else if (added) setWorkflow("arrange");
+        const pending = added - automatic;
+        setStatus(added ? `${added} contour(s) detected. ${automatic} auto-accepted. ${pending} need review.` : "No contours were added.");
+        if (autoAccept && (!batchKind || !batchExpected) && added) {
+          showNotice("Choose a tool type and enter its expected span to auto-accept the next batch.", "warn");
         }
-        setStatus(added ? `${added} contour(s) detected. Review and accept them before adding to the drawer.` : "No contours were added.");
       } catch (err) {
         console.error(err);
         showNotice("Could not process image: " + err.message, "error");
       } finally {
-        el.processBtn.disabled = false;
+        detectPending.running = false;
         hideBusy();
         renderAll();
       }
@@ -5970,8 +6095,6 @@
         draw();
       });
     }
-
-    el.processBtn.addEventListener("click", detectPending);
 
     el.canvas.addEventListener("pointerdown", ev => {
       if (state.viewMode === "3d") return;
@@ -6090,7 +6213,8 @@
     });
     window.addEventListener("resize", () => {
       canvasRectCache = null;
-      scheduleDraw();
+      if (state.view === "export") drawOutputPreview();
+      else scheduleDraw();
     });
     el.drawerW.addEventListener("input", () => { fitView(); if (el.tileReadout) el.tileReadout.textContent = describeTiles(bedLimits()); });
     el.drawerH.addEventListener("input", () => { fitView(); if (el.tileReadout) el.tileReadout.textContent = describeTiles(bedLimits()); });
@@ -6173,7 +6297,9 @@
       item.pocketDepth = depth;
       const tool = getTool(item.toolId);
       if (tool) tool.pocketDepth = depth;
+      if (state.viewMode === "3d") drawLayout();
       renderExportReport();
+      scheduleAutosave();
     });
     el.rotInput.addEventListener("input", () => {
       const item = getSelectedItem();
@@ -6188,8 +6314,9 @@
       input.addEventListener("input", () => {
         invalidateContourCache();
         scheduleAutosave();
-        if (el.massReadout) el.massReadout.textContent = `~${Math.max(1, Math.round(estimateFilamentGrams()))} g PLA`;
+        state.printModels=null;renderExportReport();
         if (el.boardMeta) el.boardMeta.textContent = `${Number(el.stlThicknessInput.value) || 18} mm board · ${Number(el.stlWallInput.value) || 2} mm wall`;
+        if (state.viewMode === "3d" && state.view === "arrange") drawLayout();
       });
     });
     [el.offsetInput, el.metalRepairInput, el.smoothInput, el.spacingInput].forEach(input => {
@@ -6246,6 +6373,17 @@
       await reprocessTool(tool.id);
     });
 
+    el.captureKind.addEventListener("change", updateCaptureChecks);
+    el.captureExpected.addEventListener("change", updateCaptureChecks);
+    el.applyCaliper.addEventListener("click", applyCaptureCaliper);
+    el.captureMeasured.addEventListener("keydown", event => {
+      if (event.key === "Enter") applyCaptureCaliper();
+    });
+    el.acceptAllInPreview.addEventListener("click", acceptAllCaptureContours);
+    el.reviewSelectedCapture.addEventListener("click", () => {
+      const item = getSelectedItem();
+      if (item) showPreview(getTool(item.toolId));
+    });
     el.previewName.addEventListener("input", () => {
       const tool = getTool(state.previewToolId);
       if (!tool) return;
@@ -6272,6 +6410,8 @@
       download(state.pendingLayoutName.replace(/\.dxf$/i, ".svg"), state.pendingLayoutSvg, "image/svg+xml");
       showNotice("Success: exported drawer layout as SVG.");
     });
+
+    document.getElementById("goToExport").addEventListener("click", () => showView("export"));
 
     el.workflowSteps.forEach(step => {
       step.addEventListener("click", () => showView(step.dataset.step));
@@ -6426,6 +6566,10 @@
       el.exportModeLaser.setAttribute("aria-pressed", stl ? "false" : "true");
       el.downloadStl.classList.toggle("hidden", !stl);
       el.downloadLayout.classList.toggle("hidden", stl);
+      el.downloadTiles.classList.toggle("hidden", !stl);
+      document.getElementById("printSettings").classList.toggle("hidden", !stl);
+      document.getElementById("printBoardMeta").classList.toggle("hidden", !stl);
+      document.getElementById("printEstimates")?.classList.toggle("hidden", !stl);
     }
 
     function setViewMode(mode) {

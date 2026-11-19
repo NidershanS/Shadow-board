@@ -1,5 +1,7 @@
 # Image-processing verification
 
+Historical report for 91d1370. See [current print/capture verification](PRINT_VERIFICATION.md) for the hard-shadow fix, review checks, calibration and final eight-photo rerun.
+
 Branch: cursor/snapinset-revamp-ae47. Baseline: 980f4d052433e38e274c992e38c442f25365b65b. All eight original photos processed automatically; no manual corners or retouching.
 
 Dimensions below are page-axis bounding boxes, L × W mm, at zero clearance. The supplied measurements differ from the fresh baseline run, so both are retained rather than presented as identical experiments. Existing UI defaults, including 2 mm clearance, were not changed.
