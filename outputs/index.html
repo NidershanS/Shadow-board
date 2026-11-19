@@ -53,6 +53,7 @@
     .btn.primary { background: var(--tomato-600); border-color: var(--tomato-600); color: #fff; font-weight: 700; }
     .btn.primary:hover { background: var(--tomato-700); border-color: var(--tomato-700); }
     .btn.primary.lg { min-height: 52px; width: 100%; font-size: 19px; font-family: var(--font-head); letter-spacing: .01em; }
+    #downloadTiles { width: 100%; }
     .btn.quiet { border-color: transparent; background: transparent; }
     .btn.quiet:hover { background: rgba(255,255,255,.12); }
     .btn.danger { border-color: var(--error); color: var(--error); background: transparent; }
@@ -367,6 +368,26 @@
               </div>
               <label>STL cavity detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="4" step="0.25"></label>
               <p class="note">The solid skin prints on the bed and each pocket keeps a floor. A large board coarsens the cavity grid on its own.</p>
+              <label>Printer bed
+                <select id="bedPreset">
+                  <option value="a1mini">Bambu A1 mini — 180 × 180</option>
+                  <option value="a1" selected>Bambu A1 / P1S / X1C — 256 × 256</option>
+                  <option value="h2d">Bambu H2D — 325 × 320</option>
+                  <option value="mk4s">Prusa MK4S — 250 × 210</option>
+                  <option value="coreone">Prusa CORE One — 250 × 220</option>
+                  <option value="ender3">Ender-3 V3 — 220 × 220</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <div class="grid2">
+                <label>Bed width mm<input id="bedW" type="number" value="256" min="80" step="1"></label>
+                <label>Bed depth mm<input id="bedH" type="number" value="256" min="80" step="1"></label>
+              </div>
+              <div class="grid2">
+                <label>Margin mm/side<input id="bedMargin" type="number" value="3" min="0" max="15" step="0.5"></label>
+                <label>Key clearance mm<input id="keyClearance" type="number" value="0.25" min="0.2" max="0.3" step="0.01"></label>
+              </div>
+              <p id="tileReadout" class="note">Tiles are cut when the board is larger than the bed, with dovetail keys along the seams.</p>
               <div class="grid2">
                 <label>Arrange spacing mm<input id="arrangeSpacingInput" type="number" value="10" min="0" step="0.5"></label>
                 <label>Arrange time limit sec<input id="arrangeTimeInput" type="number" value="8" min="1" max="60" step="1"></label>
@@ -374,6 +395,7 @@
             </div>
           </details>
           <button id="downloadStl" class="btn primary lg" type="button">Export STL</button>
+          <button id="downloadTiles" class="btn" type="button">Export tiles</button>
           <button id="downloadLayout" class="btn primary lg hidden" type="button">Export DXF</button>
           <div class="note m-hide">Preview, layout and project saves are free</div>
         </div>
@@ -511,6 +533,16 @@
       a3: { label: "A3", w: 297, h: 420 },
       letter: { label: "Letter", w: 215.9, h: 279.4 }
     };
+    const BED_PRESETS = {
+      a1mini: { w: 180, h: 180 },
+      a1: { w: 256, h: 256 },
+      h2d: { w: 325, h: 320 },
+      mk4s: { w: 250, h: 210 },
+      coreone: { w: 250, h: 220 },
+      ender3: { w: 220, h: 220 },
+      custom: null
+    };
+    const KEY_NECK = 8, KEY_HEAD = 12, KEY_DEPTH = 8, SEAM_RIM = 10, TILE_CAP = 200;
     const DRAWER_PRESETS = {
       custom: null,
       gridfinity: { w: 168, h: 126, label: "Gridfinity 4×3 (168 × 126 mm)" },
@@ -568,6 +600,13 @@
       stlThicknessInput: document.getElementById("stlThicknessInput"),
       stlWallInput: document.getElementById("stlWallInput"),
       stlResolutionInput: document.getElementById("stlResolutionInput"),
+      bedPreset: document.getElementById("bedPreset"),
+      bedW: document.getElementById("bedW"),
+      bedH: document.getElementById("bedH"),
+      bedMargin: document.getElementById("bedMargin"),
+      keyClearance: document.getElementById("keyClearance"),
+      tileReadout: document.getElementById("tileReadout"),
+      downloadTiles: document.getElementById("downloadTiles"),
       downloadStl: document.getElementById("downloadStl"),
       newProject: document.getElementById("newProject"),
       exportProject: document.getElementById("exportProject"),
@@ -839,7 +878,12 @@
           finger: Number(el.fingerInput.value),
           stlThickness: Number(el.stlThicknessInput.value),
           stlWall: Number(el.stlWallInput.value),
-          stlResolution: Number(el.stlResolutionInput.value)
+          stlResolution: Number(el.stlResolutionInput.value),
+          bedPreset: el.bedPreset.value,
+          bedW: Number(el.bedW.value),
+          bedH: Number(el.bedH.value),
+          bedMargin: Number(el.bedMargin.value),
+          keyClearance: Number(el.keyClearance.value)
         },
         tools: state.tools.map(tool => ({
           id: tool.id,
@@ -893,6 +937,11 @@
       el.stlThicknessInput.value = settings.stlThickness ?? 18;
       el.stlWallInput.value = settings.stlWall ?? 2;
       el.stlResolutionInput.value = Math.min(4, Math.max(0.75, Number(settings.stlResolution ?? 1.5)));
+      if (el.bedPreset && settings.bedPreset && BED_PRESETS[settings.bedPreset] !== undefined) el.bedPreset.value = settings.bedPreset;
+      if (el.bedW && settings.bedW) el.bedW.value = settings.bedW;
+      if (el.bedH && settings.bedH) el.bedH.value = settings.bedH;
+      if (el.bedMargin && settings.bedMargin != null) el.bedMargin.value = settings.bedMargin;
+      if (el.keyClearance && settings.keyClearance != null) el.keyClearance.value = settings.keyClearance;
       state.files = [];
       state.pendingFiles = [];
       state.tools = project.tools.map(tool => ({
@@ -3737,6 +3786,7 @@
       el.lockSelected.textContent = sel?.locked ? "Unlock Position" : "Lock Position";
       el.downloadLayout.disabled = !state.items.length;
       el.downloadStl.disabled = !state.items.length;
+      if (el.downloadTiles) el.downloadTiles.disabled = !state.items.length;
       el.emptyState.classList.toggle("hidden", state.view === "capture" || state.items.length > 0);
       updateWorkflow();
       scheduleAutosave();
@@ -4525,6 +4575,8 @@
     function makePrintableShellStl(cutEntities, drawer, settings) {
       const thickness = Math.max(3, Number(settings.thickness) || 18);
       const skin = Math.max(0.8, Number(settings.wall) || 2);
+      const rim = Math.max(skin, Number(settings.rim) || skin);
+      const chamfer = Math.max(0, Math.min(1.2, Number(settings.chamfer) || 0));
       if (skin >= thickness - 0.4) throw new Error("Wall / skin thickness must be smaller than board thickness.");
       const requestedPitch = Math.min(4, Math.max(0.75, Number(settings.pitch) || 1.5));
       let pitch = requestedPitch;
@@ -4562,7 +4614,7 @@
       });
 
       const cellCount = cols * rows;
-      const band = skin + pitch * 0.6;
+      const band = rim + pitch * 0.6;
       const cavityMask = new Uint8Array(cellCount);
       for (let r = 0; r < rows; r++) {
         const py = (r + 0.5) * pitch;
@@ -4596,10 +4648,11 @@
         .map(loop => (signedArea2(loop) > 0 ? loop : loop.slice().reverse()))
         .map(loop => densifyLoop(loop, loopStep));
 
-      const rectLoop = densifyLoop(
-        [{ x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h }, { x: 0, y: drawer.h }],
-        Math.min(faceMeshSize, band * 1.8)
-      );
+      let outer = Array.isArray(settings.outline) && settings.outline.length >= 4
+        ? settings.outline.map(p => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }))
+        : [{ x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h }, { x: 0, y: drawer.h }];
+      if (signedArea2(outer) < 0) outer.reverse();
+      const rectLoop = densifyLoop(outer, Math.min(faceMeshSize, Math.max(1.2, band * 1.8)));
       const nodes = [
         { loop: rectLoop, kind: "rect", floorZ: 0, area: Math.abs(signedArea2(rectLoop)) / 2, children: [], depth: 0 },
         ...cuts.map(cut => ({ loop: cut.loop, kind: "cut", floorZ: cut.floorZ, area: Math.abs(signedArea2(cut.loop)) / 2, children: [], depth: -1 })),
@@ -4646,16 +4699,95 @@
         return dm || refineFaceTriangulation(triangulatePolygonWithHoles(outer, holes), faceMeshSize);
       };
 
-      // Solid skin on the bed. Pockets and the hollow open upward, so nothing bridges.
-      pushFace(meshFace(rectLoop, []), 0, true);
-      addWalls(rectLoop, 0, thickness, true);
+      const labelLoops = (settings.labelLoops || []).filter(loop => loop && loop.length >= 3).map(loop => {
+        const copy = loop.map(p => ({ x: p.x, y: p.y }));
+        return signedArea2(copy) < 0 ? copy.reverse() : copy;
+      });
+      let labelHost = null;
       nodes.forEach(node => {
-        const holes = node.children.map(ch => ch.loop);
+        if (node.kind !== "cavity" || node.depth % 2 !== 1) return;
+        if (!labelHost || node.area > labelHost.area) labelHost = node;
+      });
+      const emboss = [];
+      const loopFits = (loop, host) => loop.every(p => pointInPolygon(p, host.loop) && !host.children.some(ch => pointInPolygon(p, ch.loop)));
+      if (labelHost && labelLoops.length) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        labelLoops.forEach(loop => loop.forEach(p => {
+          minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+        }));
+        let hx0 = Infinity, hy0 = Infinity, hx1 = -Infinity, hy1 = -Infinity;
+        labelHost.loop.forEach(p => {
+          hx0 = Math.min(hx0, p.x); hy0 = Math.min(hy0, p.y);
+          hx1 = Math.max(hx1, p.x); hy1 = Math.max(hy1, p.y);
+        });
+        const lw = maxX - minX, lh = maxY - minY;
+        const shifts = [{ x: 0, y: 0 }];
+        for (let y = hy0 + 3; y <= hy1 - lh - 3; y += 8) {
+          for (let x = hx0 + 3; x <= hx1 - lw - 3; x += 8) shifts.push({ x: x - minX, y: y - minY });
+        }
+        for (const shift of shifts) {
+          const moved = labelLoops.map(loop => loop.map(p => ({ x: p.x + shift.x, y: p.y + shift.y })));
+          if (moved.every(loop => loopFits(loop, labelHost))) {
+            moved.forEach(loop => emboss.push(loop));
+            break;
+          }
+        }
+        if (emboss.length) labelHost.emboss = emboss;
+      }
+
+      function offsetInset(loop, dist) {
+        const lines = loop.map((a, i) => {
+          const b = loop[(i + 1) % loop.length];
+          const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+          return { p: { x: a.x + nx * dist, y: a.y + ny * dist }, dir: { x: (b.x - a.x) / len, y: (b.y - a.y) / len } };
+        });
+        return lines.map((line, i) => {
+          const prev = lines[(i + lines.length - 1) % lines.length];
+          const cross = prev.dir.x * line.dir.y - prev.dir.y * line.dir.x;
+          const dx = line.p.x - prev.p.x, dy = line.p.y - prev.p.y;
+          const t = Math.abs(cross) < 1e-6 ? 0 : (dx * line.dir.y - dy * line.dir.x) / cross;
+          const hit = { x: prev.p.x + prev.dir.x * t, y: prev.p.y + prev.dir.y * t };
+          const spike = Math.hypot(hit.x - line.p.x, hit.y - line.p.y);
+          if (spike > dist * 4) return { x: line.p.x, y: line.p.y };
+          return hit;
+        });
+      }
+
+      // Solid skin on the bed. A small chamfer keeps the first layer from squishing outward.
+      if (chamfer >= 0.05) {
+        const inset = offsetInset(rectLoop, chamfer);
+        pushFace(meshFace(inset, []), 0, true);
+        for (let i = 0; i < rectLoop.length; i++) {
+          const a0 = inset[i], b0 = inset[(i + 1) % inset.length];
+          const a1 = rectLoop[i], b1 = rectLoop[(i + 1) % rectLoop.length];
+          addStlQuad(triangles,
+            { x: a0.x, y: a0.y, z: 0 },
+            { x: b0.x, y: b0.y, z: 0 },
+            { x: b1.x, y: b1.y, z: chamfer },
+            { x: a1.x, y: a1.y, z: chamfer }
+          );
+        }
+        addWalls(rectLoop, chamfer, thickness, true);
+      } else {
+        pushFace(meshFace(rectLoop, []), 0, true);
+        addWalls(rectLoop, 0, thickness, true);
+      }
+      nodes.forEach(node => {
+        const holes = node.children.map(ch => ch.loop).concat(node.emboss || []);
         if (node.depth % 2 === 0) {
           pushFace(meshFace(node.loop, holes), thickness, false);
         } else {
-          pushFace(meshFace(node.loop, holes), node.floorZ, false);
+          const floor = (node.emboss || []).length
+            ? triangulatePolygonWithHoles(node.loop, holes)
+            : meshFace(node.loop, holes);
+          pushFace(floor, node.floorZ, false);
           addWalls(node.loop, node.floorZ, thickness, false);
+          (node.emboss || []).forEach(loop => {
+            pushFace(triangulatePolygonWithHoles(loop, []), node.floorZ + 0.6, false);
+            addWalls(loop, node.floorZ, node.floorZ + 0.6, true);
+          });
         }
       });
       // Material islands (even depth, not the outer rectangle) need a wall down to the
@@ -4666,6 +4798,25 @@
         const z0 = parent ? parent.floorZ : skin;
         addWalls(node.loop, z0, thickness, true);
       });
+
+      if ((settings.labelLoops || []).length && !settings._nolabel) {
+        const edgeUse = new Map();
+        const pk = p => p.x.toFixed(3) + "," + p.y.toFixed(3) + "," + p.z.toFixed(3);
+        triangles.forEach(t => {
+          for (let e = 0; e < 3; e++) {
+            const a = pk(t[e]), b = pk(t[(e + 1) % 3]);
+            const key = a < b ? a + "|" + b : b + "|" + a;
+            edgeUse.set(key, (edgeUse.get(key) || 0) + 1);
+          }
+        });
+        let openEdges = 0;
+        edgeUse.forEach(n => { if (n !== 2) openEdges++; });
+        if (openEdges) {
+          const again = makePrintableShellStl(cutEntities, drawer, Object.assign({}, settings, { labelLoops: [], _nolabel: true }));
+          again.labelDropped = true;
+          return again;
+        }
+      }
 
       const mm3 = meshVolumeMm3(triangles);
       const grams = mm3 / 1000 * 1.24;
@@ -4680,7 +4831,8 @@
         thickness,
         wall: skin,
         volume: mm3,
-        grams
+        grams,
+        labeled: emboss.length
       };
     }
 
@@ -4886,7 +5038,8 @@
         thickness: Number(el.stlThicknessInput.value),
         wall: Number(el.stlWallInput.value),
         pitch: Number(el.stlResolutionInput.value),
-        name: safeFileBase(cleanProjectName())
+        name: safeFileBase(cleanProjectName()),
+        chamfer: 0.3
       };
       showBusy("Building 3D printable STL...", "Skin on the bed, pockets open upward.", 12);
       await nextFrame();
@@ -4904,6 +5057,489 @@
         showNotice(`Exported STL. Skin is on the bed. About ${stl.grams.toFixed(0)} g of PLA, from the mesh volume (estimate).${pitchNote}`);
       } catch (err) {
         showNotice("STL export blocked: " + err.message);
+      } finally {
+        hideBusy();
+      }
+    }
+
+    function bedLimits() {
+      const bedW = Math.max(80, Number(el.bedW.value) || 256);
+      const bedH = Math.max(80, Number(el.bedH.value) || 256);
+      const margin = Math.min(15, Math.max(0, Number(el.bedMargin.value) || 0));
+      const usableW = bedW - margin * 2;
+      const usableH = bedH - margin * 2;
+      return {
+        bedW, bedH, margin, usableW, usableH,
+        maxW: Math.min(TILE_CAP, usableW - KEY_DEPTH),
+        maxH: Math.min(TILE_CAP, usableH - KEY_DEPTH)
+      };
+    }
+
+    function keyClearanceMm() {
+      return Math.min(0.3, Math.max(0.2, Number(el.keyClearance.value) || 0.25));
+    }
+
+    function openLoop(points) {
+      if (!points || points.length < 3) return [];
+      const loop = points.map(p => ({ x: p.x, y: p.y }));
+      const a = loop[0], b = loop[loop.length - 1];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 1e-6) loop.pop();
+      return loop;
+    }
+
+    function mergeSpans(spans) {
+      const sorted = spans.filter(s => s[1] > s[0] + 1e-6).sort((a, b) => a[0] - b[0]);
+      const out = [];
+      sorted.forEach(s => {
+        if (!out.length || s[0] > out[out.length - 1][1]) out.push([s[0], s[1]]);
+        else out[out.length - 1][1] = Math.max(out[out.length - 1][1], s[1]);
+      });
+      return out;
+    }
+
+    function subtractSpans(range, blocked) {
+      let free = [range];
+      mergeSpans(blocked).forEach(([a, b]) => {
+        const next = [];
+        free.forEach(([lo, hi]) => {
+          if (b <= lo || a >= hi) next.push([lo, hi]);
+          else {
+            if (a > lo) next.push([lo, a]);
+            if (b < hi) next.push([b, hi]);
+          }
+        });
+        free = next;
+      });
+      return free.filter(s => s[1] - s[0] > KEY_HEAD + 4);
+    }
+
+    function polygonCutSpans(poly, axis, pos) {
+      const other = axis === "x" ? "y" : "x";
+      const hits = [];
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const a0 = a[axis], b0 = b[axis];
+        if (a0 === b0) continue;
+        const lo = Math.min(a0, b0), hi = Math.max(a0, b0);
+        if (pos < lo || pos >= hi) continue;
+        const t = (pos - a0) / (b0 - a0);
+        hits.push(a[other] + t * (b[other] - a[other]));
+      }
+      hits.sort((p, q) => p - q);
+      const spans = [];
+      for (let i = 0; i + 1 < hits.length; i += 2) spans.push([hits[i], hits[i + 1]]);
+      return spans;
+    }
+
+    function crossingLength(polys, axis, pos) {
+      const spans = [];
+      polys.forEach(poly => polygonCutSpans(poly, axis, pos).forEach(s => spans.push(s)));
+      return mergeSpans(spans).reduce((n, s) => n + (s[1] - s[0]), 0);
+    }
+
+    function planCuts(length, maxLen, costAt) {
+      if (!(maxLen > 20)) throw new Error("The printer bed is too small for a tile once the margin and dovetail are subtracted.");
+      if (length <= maxLen + 0.05) return [];
+      const n = Math.ceil(length / maxLen - 1e-9);
+      const step = length > 800 ? 4 : 2;
+      const cands = [];
+      for (let c = step; c < length - 0.5; c += step) cands.push(Math.round(c * 100) / 100);
+      const cost = new Map(cands.map(c => [c, costAt(c)]));
+      const best = new Map();
+      cands.forEach(c => {
+        if (c <= maxLen + 1e-6) best.set("1," + c, { cost: cost.get(c), prev: null });
+      });
+      for (let k = 2; k < n; k++) {
+        cands.forEach(c => {
+          let win = null;
+          cands.forEach(prevC => {
+            const prev = best.get((k - 1) + "," + prevC);
+            if (!prev || c - prevC < step - 1e-6 || c - prevC > maxLen + 1e-6) return;
+            const v = prev.cost + cost.get(c);
+            if (!win || v < win.cost) win = { cost: v, prev: prevC };
+          });
+          if (win) best.set(k + "," + c, win);
+        });
+      }
+      let fin = null;
+      cands.forEach(c => {
+        const prev = best.get((n - 1) + "," + c);
+        if (!prev || length - c > maxLen + 1e-6) return;
+        if (!fin || prev.cost < fin.cost) fin = { cost: prev.cost, c };
+      });
+      if (!fin) {
+        const cuts = [];
+        for (let i = 1; i < n; i++) cuts.push(Math.round(length * i / n * 100) / 100);
+        return cuts;
+      }
+      const cuts = [fin.c];
+      let c = fin.c;
+      for (let k = n - 1; k > 1; k--) {
+        c = best.get(k + "," + c).prev;
+        cuts.push(c);
+      }
+      return cuts.sort((a, b) => a - b);
+    }
+
+    function equalCuts(length, maxLen) {
+      if (length <= maxLen + 0.05) return [];
+      const n = Math.ceil(length / maxLen - 1e-9);
+      const cuts = [];
+      for (let i = 1; i < n; i++) cuts.push(length * i / n);
+      return cuts;
+    }
+
+    function clipPoly(poly, inside, hit) {
+      const out = [];
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const ain = inside(a), bin = inside(b);
+        if (ain && bin) out.push(b);
+        else if (ain && !bin) out.push(hit(a, b));
+        else if (!ain && bin) { out.push(hit(a, b)); out.push(b); }
+      }
+      return out;
+    }
+
+    function clipToRect(poly, x0, y0, x1, y1) {
+      const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      let p = poly.slice();
+      const edges = [
+        { inside: q => q.x >= x0 - 1e-6, hit: (a, b) => lerp(a, b, (x0 - a.x) / ((b.x - a.x) || 1e-9)) },
+        { inside: q => q.x <= x1 + 1e-6, hit: (a, b) => lerp(a, b, (x1 - a.x) / ((b.x - a.x) || 1e-9)) },
+        { inside: q => q.y >= y0 - 1e-6, hit: (a, b) => lerp(a, b, (y0 - a.y) / ((b.y - a.y) || 1e-9)) },
+        { inside: q => q.y <= y1 + 1e-6, hit: (a, b) => lerp(a, b, (y1 - a.y) / ((b.y - a.y) || 1e-9)) }
+      ];
+      for (const edge of edges) {
+        if (p.length < 3) return [];
+        p = clipPoly(p, edge.inside, edge.hit);
+      }
+      return p.length >= 3 ? p : [];
+    }
+
+    function outlineSelfCrosses(poly) {
+      const n = poly.length;
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 2; j < n; j++) {
+          if (i === 0 && j === n - 1) continue;
+          if (segmentsIntersect(poly[i], poly[(i + 1) % n], poly[j], poly[(j + 1) % n])) return true;
+        }
+      }
+      return false;
+    }
+
+    function appendSeam(pts, start, end, centers, kind, vary, outward, clearance) {
+      const fix = vary === "x" ? "y" : "x";
+      const step = Math.sign(end[vary] - start[vary]) || 1;
+      const ordered = centers.slice().sort((a, b) => (a - b) * step);
+      const c = kind === "socket" ? clearance : 0;
+      const halfN = KEY_NECK / 2 + c;
+      const halfH = KEY_HEAD / 2 + c;
+      const depth = KEY_DEPTH + c;
+      const dir = kind === "key" ? outward : -outward;
+      if (!pts.length) pts.push({ x: start.x, y: start.y });
+      ordered.forEach(t => {
+        const neckA = { x: start.x, y: start.y };
+        const neckB = { x: start.x, y: start.y };
+        const headA = { x: start.x, y: start.y };
+        const headB = { x: start.x, y: start.y };
+        neckA[vary] = t - step * halfN;
+        neckB[vary] = t + step * halfN;
+        headA[vary] = t - step * halfH;
+        headB[vary] = t + step * halfH;
+        headA[fix] = start[fix] + dir * depth;
+        headB[fix] = start[fix] + dir * depth;
+        pts.push(neckA, headA, headB, neckB);
+      });
+      pts.push({ x: end.x, y: end.y });
+    }
+
+    function blockedOnSeam(polys, axis, pos, lo, hi) {
+      const spans = [];
+      polys.forEach(poly => {
+        let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+        poly.forEach(p => {
+          const a = axis === "x" ? p.x : p.y;
+          const b = axis === "x" ? p.y : p.x;
+          minA = Math.min(minA, a); maxA = Math.max(maxA, a);
+          minB = Math.min(minB, b); maxB = Math.max(maxB, b);
+        });
+        if (maxA < pos - 20 || minA > pos + 20) return;
+        if (maxB < lo || minB > hi) return;
+        spans.push([Math.max(lo, minB - 20), Math.min(hi, maxB + 20)]);
+      });
+      return mergeSpans(spans);
+    }
+
+    function keyCenters(lo, hi, blocked) {
+      const centers = [];
+      subtractSpans([lo + 14, hi - 14], blocked).forEach(([a, b]) => {
+        const n = Math.max(1, Math.floor((b - a) / 70));
+        for (let i = 0; i < n; i++) centers.push(a + (b - a) * (i + 0.5) / n);
+      });
+      return centers;
+    }
+
+    const GLYPH_SHAPES = {
+      A: [[0, 0], [2.1, 0], [4, 8], [1.9, 8]],
+      B: [[0, 0], [4.4, 0], [6.2, 1.5], [4.4, 3.4], [6.2, 4.6], [6.2, 6.6], [4.4, 8], [0, 8]],
+      C: [[0, 0], [6.2, 0], [6.2, 2.3], [2.3, 2.3], [2.3, 5.7], [6.2, 5.7], [6.2, 8], [0, 8]],
+      "1": [[2, 0], [4.3, 0], [4.3, 8], [2, 8]],
+      "2": [[0, 0], [6.2, 0], [6.2, 2.4], [2.4, 2.4], [2.4, 3.5], [6.2, 3.5], [6.2, 8], [0, 8], [0, 5.6], [3.8, 5.6], [3.8, 4.7], [0, 4.7]],
+      "3": [[0, 0], [6.2, 0], [6.2, 8], [0, 8], [0, 5.7], [3.8, 5.7], [3.8, 4.6], [0, 4.6], [0, 2.3], [3.8, 2.3], [3.8, 3.4], [0, 3.4]]
+    };
+
+    function glyphLoops(ch, x, y) {
+      const shape = GLYPH_SHAPES[ch];
+      if (!shape) return [];
+      return [shape.map(([px, py]) => ({ x: x + px, y: y + py }))];
+    }
+
+    function labelLoopsFor(text, x, y) {
+      const loops = [];
+      let cursor = x;
+      String(text).split("").forEach((ch, index) => {
+        // Stagger baselines by a fraction of a millimetre. The triangulator drops
+        // a hole edge when two holes share the same horizontal.
+        glyphLoops(ch, cursor, y + index * 0.45).forEach(loop => loops.push(loop));
+        cursor += 8.4;
+      });
+      return loops;
+    }
+
+    function tileLabel(col, row) {
+      const letter = col < 26 ? String.fromCharCode(65 + col) : String(col + 1);
+      return letter + String(row + 1);
+    }
+
+    function loopBounds(loop) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      loop.forEach(p => {
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      });
+      return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+    }
+
+    function crc32(bytes) {
+      if (!crc32.table) {
+        const table = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+          let c = i;
+          for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+          table[i] = c >>> 0;
+        }
+        crc32.table = table;
+      }
+      let c = 0xffffffff;
+      for (let i = 0; i < bytes.length; i++) c = crc32.table[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    }
+
+    function zipStore(files) {
+      const enc = new TextEncoder();
+      const parts = [];
+      const central = [];
+      let offset = 0;
+      files.forEach(file => {
+        const name = enc.encode(file.name);
+        const data = file.data instanceof Uint8Array ? file.data : new Uint8Array(file.data);
+        const crc = crc32(data);
+        const local = new Uint8Array(30 + name.length);
+        const view = new DataView(local.buffer);
+        view.setUint32(0, 0x04034b50, true);
+        view.setUint16(4, 20, true);
+        view.setUint16(8, 0, true);
+        view.setUint32(14, crc, true);
+        view.setUint32(18, data.length, true);
+        view.setUint32(22, data.length, true);
+        view.setUint16(26, name.length, true);
+        local.set(name, 30);
+        parts.push(local, data);
+        const cen = new Uint8Array(46 + name.length);
+        const cv = new DataView(cen.buffer);
+        cv.setUint32(0, 0x02014b50, true);
+        cv.setUint16(4, 20, true);
+        cv.setUint16(6, 20, true);
+        cv.setUint32(16, crc, true);
+        cv.setUint32(20, data.length, true);
+        cv.setUint32(24, data.length, true);
+        cv.setUint16(28, name.length, true);
+        cv.setUint32(42, offset, true);
+        cen.set(name, 46);
+        central.push(cen);
+        offset += local.length + data.length;
+      });
+      const centralSize = central.reduce((n, part) => n + part.length, 0);
+      const end = new Uint8Array(22);
+      const ev = new DataView(end.buffer);
+      ev.setUint32(0, 0x06054b50, true);
+      ev.setUint16(8, files.length, true);
+      ev.setUint16(10, files.length, true);
+      ev.setUint32(12, centralSize, true);
+      ev.setUint32(16, offset, true);
+      const out = new Uint8Array(offset + centralSize + 22);
+      let cursor = 0;
+      parts.forEach(part => { out.set(part, cursor); cursor += part.length; });
+      central.forEach(part => { out.set(part, cursor); cursor += part.length; });
+      out.set(end, cursor);
+      return out.buffer;
+    }
+
+    function translateStl(buf, dx, dy) {
+      const out = buf.slice(0);
+      const view = new DataView(out);
+      const n = view.getUint32(80, true);
+      for (let i = 0; i < n; i++) {
+        const base = 84 + i * 50 + 12;
+        for (let v = 0; v < 3; v++) {
+          const o = base + v * 12;
+          view.setFloat32(o, view.getFloat32(o, true) + dx, true);
+          view.setFloat32(o + 4, view.getFloat32(o + 4, true) + dy, true);
+        }
+      }
+      return out;
+    }
+
+    function concatStl(parts, name) {
+      let count = 0;
+      parts.forEach(buf => { count += new DataView(buf).getUint32(80, true); });
+      const out = new ArrayBuffer(84 + count * 50);
+      const view = new DataView(out);
+      const title = String(name || "snapinset").slice(0, 79);
+      for (let i = 0; i < title.length; i++) view.setUint8(i, title.charCodeAt(i));
+      view.setUint32(80, count, true);
+      let cursor = 84;
+      parts.forEach(buf => {
+        const src = new Uint8Array(buf);
+        const n = new DataView(buf).getUint32(80, true);
+        new Uint8Array(out).set(src.subarray(84, 84 + n * 50), cursor);
+        cursor += n * 50;
+      });
+      return out;
+    }
+
+    async function clearanceCoupon(clearance) {
+      const settings = { thickness: 8, wall: 2, rim: 12, pitch: 1.5, chamfer: 0.3, name: "coupon" };
+      const keyOutline = [];
+      appendSeam(keyOutline, { x: 0, y: 0 }, { x: 32, y: 0 }, [], "key", "x", -1, clearance);
+      appendSeam(keyOutline, { x: 32, y: 0 }, { x: 32, y: 22 }, [11], "key", "y", 1, clearance);
+      appendSeam(keyOutline, { x: 32, y: 22 }, { x: 0, y: 22 }, [], "key", "x", 1, clearance);
+      appendSeam(keyOutline, { x: 0, y: 22 }, { x: 0, y: 0 }, [], "key", "y", -1, clearance);
+      if (Math.hypot(keyOutline[0].x - keyOutline[keyOutline.length - 1].x, keyOutline[0].y - keyOutline[keyOutline.length - 1].y) < 1e-6) keyOutline.pop();
+      const socketOutline = [];
+      appendSeam(socketOutline, { x: 0, y: 0 }, { x: 32, y: 0 }, [], "socket", "x", -1, clearance);
+      appendSeam(socketOutline, { x: 32, y: 0 }, { x: 32, y: 22 }, [], "socket", "y", 1, clearance);
+      appendSeam(socketOutline, { x: 32, y: 22 }, { x: 0, y: 22 }, [], "socket", "x", 1, clearance);
+      appendSeam(socketOutline, { x: 0, y: 22 }, { x: 0, y: 0 }, [11], "socket", "y", -1, clearance);
+      if (Math.hypot(socketOutline[0].x - socketOutline[socketOutline.length - 1].x, socketOutline[0].y - socketOutline[socketOutline.length - 1].y) < 1e-6) socketOutline.pop();
+      const key = await buildShellStl([], { w: 32, h: 22 }, { ...settings, outline: keyOutline });
+      const socket = await buildShellStl([], { w: 32, h: 22 }, { ...settings, outline: socketOutline });
+      return concatStl([key.content, translateStl(socket.content, 48, 0)], "clearance_coupon");
+    }
+
+    function describeTiles(limits) {
+      const w = Number(el.drawerW.value) || 0;
+      const h = Number(el.drawerH.value) || 0;
+      if (!w || !h || !(limits.maxW > 20)) return "Set a printer bed to split the board into tiles.";
+      const nx = Math.max(1, Math.ceil(w / limits.maxW - 1e-9));
+      const ny = Math.max(1, Math.ceil(h / limits.maxH - 1e-9));
+      if (nx === 1 && ny === 1) return `This board fits the ${limits.bedW} × ${limits.bedH} mm bed in one piece.`;
+      return `About ${nx * ny} tiles on a ${limits.bedW} × ${limits.bedH} mm bed. Seams get a dovetail key.`;
+    }
+
+    async function exportTiles() {
+      const data = buildLayoutExportData();
+      if (data.error) {
+        showNotice(data.error.replace("drawer DXF export", "tile export"));
+        return;
+      }
+      const limits = bedLimits();
+      if (!(limits.maxW > 30) || !(limits.maxH > 30)) {
+        showNotice("Tile export blocked: the bed is smaller than a tile plus its dovetail.", "error");
+        return;
+      }
+      const clearance = keyClearanceMm();
+      const polys = data.ents.map(ent => openLoop(ent.points)).filter(loop => loop.length >= 3);
+      const xCuts = planCuts(data.drawer.w, limits.maxW, pos => crossingLength(polys, "x", pos));
+      const yCuts = planCuts(data.drawer.h, limits.maxH, pos => crossingLength(polys, "y", pos));
+      const xs = [0, ...xCuts, data.drawer.w];
+      const ys = [0, ...yCuts, data.drawer.h];
+      const naive = equalCuts(data.drawer.w, limits.maxW).reduce((n, c) => n + crossingLength(polys, "x", c), 0)
+        + equalCuts(data.drawer.h, limits.maxH).reduce((n, c) => n + crossingLength(polys, "y", c), 0);
+      const chosen = xCuts.reduce((n, c) => n + crossingLength(polys, "x", c), 0)
+        + yCuts.reduce((n, c) => n + crossingLength(polys, "y", c), 0);
+      const pad = 0.2;
+      const files = [];
+      const notes = [];
+      showBusy("Splitting the board into tiles...", `${xs.length - 1} × ${ys.length - 1} tiles.`, 8);
+      await nextFrame();
+      try {
+        for (let row = 0; row < ys.length - 1; row++) {
+          for (let col = 0; col < xs.length - 1; col++) {
+            const x0 = xs[col], x1 = xs[col + 1], y0 = ys[row], y1 = ys[row + 1];
+            const label = tileLabel(col, row);
+            updateBusy("Splitting the board into tiles...", `Tile ${label}.`, 10 + (80 * (row * (xs.length - 1) + col)) / ((xs.length - 1) * (ys.length - 1)));
+            await nextFrame();
+            const localCuts = [];
+            data.ents.forEach(ent => {
+              const clipped = clipToRect(openLoop(ent.points), x0 + pad, y0 + pad, x1 - pad, y1 - pad);
+              if (clipped.length < 3 || Math.abs(signedArea2(clipped)) / 2 < 1) return;
+              localCuts.push({
+                points: clipped.map(p => ({ x: p.x - x0, y: p.y - y0 })),
+                depth: ent.depth
+              });
+            });
+            const rightKeys = col < xs.length - 2 ? keyCenters(y0, y1, blockedOnSeam(polys, "x", x1, y0, y1)).map(y => y - y0) : [];
+            const topKeys = row < ys.length - 2 ? keyCenters(x0, x1, blockedOnSeam(polys, "y", y1, x0, x1)).map(x => x - x0) : [];
+            const leftSockets = col > 0 ? keyCenters(y0, y1, blockedOnSeam(polys, "x", x0, y0, y1)).map(y => y - y0) : [];
+            const bottomSockets = row > 0 ? keyCenters(x0, x1, blockedOnSeam(polys, "y", y0, x0, x1)).map(x => x - x0) : [];
+            const w = x1 - x0, h = y1 - y0;
+            const outline = [];
+            appendSeam(outline, { x: 0, y: 0 }, { x: w, y: 0 }, bottomSockets, "socket", "x", -1, clearance);
+            appendSeam(outline, { x: w, y: 0 }, { x: w, y: h }, rightKeys, "key", "y", 1, clearance);
+            appendSeam(outline, { x: w, y: h }, { x: 0, y: h }, topKeys, "key", "x", 1, clearance);
+            appendSeam(outline, { x: 0, y: h }, { x: 0, y: 0 }, leftSockets, "socket", "y", -1, clearance);
+            if (Math.hypot(outline[0].x - outline[outline.length - 1].x, outline[0].y - outline[outline.length - 1].y) < 1e-6) outline.pop();
+            if (outlineSelfCrosses(outline)) throw new Error(`Tile ${label} dovetail crossed itself. Move the tools off the seam and try again.`);
+            const bounds = loopBounds(outline);
+            if (bounds.w > limits.usableW + 0.3 || bounds.h > limits.usableH + 0.3) {
+              throw new Error(`Tile ${label} is ${bounds.w.toFixed(0)} × ${bounds.h.toFixed(0)} mm, larger than the ${limits.usableW.toFixed(0)} × ${limits.usableH.toFixed(0)} mm usable bed.`);
+            }
+            const stl = await buildShellStl(localCuts, { w, h }, {
+              thickness: Number(el.stlThicknessInput.value),
+              wall: Number(el.stlWallInput.value),
+              rim: SEAM_RIM,
+              pitch: Number(el.stlResolutionInput.value),
+              chamfer: 0.3,
+              outline,
+              labelLoops: labelLoopsFor(label, SEAM_RIM + 4, SEAM_RIM + 4),
+              name: "tile_" + label
+            });
+            files.push({ name: `tile-${label}.stl`, data: stl.content });
+            notes.push(`${label}  tile-${label}.stl  ${w.toFixed(1)} × ${h.toFixed(1)} mm body, footprint ${bounds.w.toFixed(1)} × ${bounds.h.toFixed(1)} mm, label ${stl.labelDropped ? "skipped" : (stl.labeled || 0)}`);
+          }
+        }
+        updateBusy("Splitting the board into tiles...", "Clearance coupon.", 92);
+        await nextFrame();
+        files.push({ name: "clearance-coupon.stl", data: await clearanceCoupon(clearance) });
+        const note = [
+          "SnapInset tiles",
+          `Bed ${limits.bedW} × ${limits.bedH} mm, margin ${limits.margin} mm/side, usable ${limits.usableW.toFixed(0)} × ${limits.usableH.toFixed(0)} mm.`,
+          `Dovetail keys are ${KEY_NECK} mm at the neck, ${KEY_HEAD} mm at the head, ${KEY_DEPTH} mm deep. Clearance ${clearance.toFixed(2)} mm per side.`,
+          `Each tile keeps a ${SEAM_RIM} mm seam wall so the ${KEY_DEPTH} mm key stays in solid plastic. The wall is wider than 5 mm for that reason.`,
+          `Seams cross ${chosen.toFixed(1)} mm of pocket. An even split on the same tile count would cross ${naive.toFixed(1)} mm.`,
+          "Print the clearance coupon and press the key into the socket before printing the set.",
+          "Tile numbers are raised 0.6 mm on the cavity floor.",
+          "",
+          ...notes
+        ].join("\n");
+        files.push({ name: "tiles.txt", data: new TextEncoder().encode(note) });
+        download(`${safeFileBase(cleanProjectName())}_tiles.zip`, zipStore(files), "application/zip");
+        const better = naive > chosen + 0.5 ? ` Seams cross ${chosen.toFixed(0)} mm of pocket, against ${naive.toFixed(0)} mm for an even split.` : "";
+        showNotice(`Exported ${notes.length} tile${notes.length === 1 ? "" : "s"} plus a clearance coupon.${better}`);
+      } catch (err) {
+        showNotice("Tile export blocked: " + err.message, "error");
       } finally {
         hideBusy();
       }
@@ -5020,6 +5656,7 @@
       const wall = Number(el.stlWallInput.value) || 2;
       if (el.boardMeta) el.boardMeta.textContent = `${thickness} mm board · ${wall} mm wall`;
       if (el.massReadout) el.massReadout.textContent = `~${Math.max(1, Math.round(estimateFilamentGrams()))} g PLA`;
+      if (el.tileReadout) el.tileReadout.textContent = describeTiles(bedLimits());
       if (el.arrangeHint) {
         el.arrangeHint.textContent = overlapIssues[0]
           ? `${overlapIssues[0]} Move it, or use Auto-arrange.`
@@ -5393,13 +6030,31 @@
       canvasRectCache = null;
       scheduleDraw();
     });
-    el.drawerW.addEventListener("input", fitView);
-    el.drawerH.addEventListener("input", fitView);
+    el.drawerW.addEventListener("input", () => { fitView(); if (el.tileReadout) el.tileReadout.textContent = describeTiles(bedLimits()); });
+    el.drawerH.addEventListener("input", () => { fitView(); if (el.tileReadout) el.tileReadout.textContent = describeTiles(bedLimits()); });
     el.fitView.addEventListener("click", () => { state.userZoomed = false; fitView(); });
     el.zoomOut.addEventListener("click", () => zoomView(0.82));
     el.zoomIn.addEventListener("click", () => zoomView(1.22));
     el.downloadLayout.addEventListener("click", exportLayout);
     el.downloadStl.addEventListener("click", exportPrintableStl);
+    el.downloadTiles.addEventListener("click", exportTiles);
+    el.bedPreset.addEventListener("change", () => {
+      const preset = BED_PRESETS[el.bedPreset.value];
+      if (preset) {
+        el.bedW.value = preset.w;
+        el.bedH.value = preset.h;
+      }
+      renderExportReport();
+      scheduleAutosave();
+    });
+    [el.bedW, el.bedH, el.bedMargin, el.keyClearance].forEach(input => {
+      input.addEventListener("input", () => {
+        const preset = BED_PRESETS[el.bedPreset.value];
+        if ((input === el.bedW || input === el.bedH) && preset && (Number(el.bedW.value) !== preset.w || Number(el.bedH.value) !== preset.h)) el.bedPreset.value = "custom";
+        renderExportReport();
+        scheduleAutosave();
+      });
+    });
     el.downloadSelected.addEventListener("click", exportSelected);
     el.autoArrange.addEventListener("click", () => autoArrangeAll());
     el.duplicateSelected.addEventListener("click", () => {
