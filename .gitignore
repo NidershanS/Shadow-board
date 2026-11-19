@@ -1,4 +1,6 @@
 work/
+node_modules/
+package-lock.json
 outputs/*.png
 outputs/*.svg
 outputs/*.dxf
