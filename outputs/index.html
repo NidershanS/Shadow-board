@@ -180,6 +180,7 @@
     .progressTrack { height: 8px; background: var(--cream-sunk); border-radius: 99px; overflow: hidden; }
     .progressBar { height: 100%; width: 0; background: var(--spruce); }
     .modal { position: fixed; inset: 0; background: rgba(27,42,36,.45); display: grid; place-items: center; z-index: 25; padding: 16px; }
+    #cornerModal { z-index: 40; }
     .modalPanel { width: min(880px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--cream); border-radius: var(--r-lg); padding: 16px; display: grid; gap: 12px; }
     .modalTop, .modalTools { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
     .modalBody { background: var(--canvas); border: 1px solid var(--cream-line); border-radius: var(--r-md); display: grid; place-items: center; min-height: 220px; }
@@ -448,6 +449,7 @@
         </div>
       </details>
       <div class="modalTools">
+        <button id="adjustCorners" class="btn" type="button">Adjust corners</button>
         <button id="reprocessPreview" class="btn" type="button">Reprocess</button>
         <button id="deletePreview" class="btn danger" type="button">Reject</button>
         <button id="acceptPreview" class="btn primary" type="button">Accept contour</button>
@@ -472,6 +474,21 @@
       </div>
     </div>
   </div>
+  <div id="cornerModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cornerTitle">
+    <div class="modalPanel">
+      <div class="modalTop">
+        <div>
+          <strong id="cornerTitle">Place the paper corners</strong>
+          <div class="previewMeta">Drag each handle onto a corner of the sheet. The outline is scaled from those four points.</div>
+        </div>
+        <button id="cornerCancel" class="btn" type="button">Cancel</button>
+      </div>
+      <canvas id="cornerCanvas" style="width:100%;height:auto;background:#1F2A24;border-radius:10px;touch-action:none" aria-label="Paper corner adjustment"></canvas>
+      <div class="modalTools">
+        <button id="cornerApply" class="btn primary" type="button">Use these corners</button>
+      </div>
+    </div>
+  </div>
   <div id="helpModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
     <div class="modalPanel">
       <div class="modalTop">
@@ -479,7 +496,7 @@
         <button id="closeHelp" class="btn" type="button">Close</button>
       </div>
       <div class="help-copy">
-        <p>Snap your tools. Print the fit. Photograph tools on A4, A3, or US Letter paper, review the outline, arrange the drawer, then export an STL, DXF, or SVG.</p>
+        <p>Snap your tools. Print the fit. Photograph tools on A4, A3, or US Letter paper, review the outline, arrange the drawer, then export an STL, DXF, or SVG. Several tools can share one photo if they do not touch. If the sheet is not found, drag its four corners into place.</p>
         <p>Photos stay in this browser. Projects autosave here. Use <b>Export JSON</b> to move a project to another computer. Older project files still open.</p>
         <p><kbd>Arrows</kbd> nudge 1 mm, <kbd>Shift</kbd> nudges 10 mm. <kbd>R</kbd> rotates 15°. <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes. Scroll to zoom the drawer. Drag empty space to pan.</p>
       </div>
@@ -610,7 +627,12 @@
       arrangeHint: document.getElementById("arrangeHint"),
       toolCount: document.getElementById("toolCount"),
       dropZone: document.getElementById("dropZone"),
-      dropTitle: document.getElementById("dropTitle")
+      dropTitle: document.getElementById("dropTitle"),
+      cornerModal: document.getElementById("cornerModal"),
+      cornerCanvas: document.getElementById("cornerCanvas"),
+      cornerCancel: document.getElementById("cornerCancel"),
+      cornerApply: document.getElementById("cornerApply"),
+      adjustCorners: document.getElementById("adjustCorners")
     };
     const ctx = el.canvas.getContext("2d");
 
@@ -825,7 +847,12 @@
           sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
           defaultPulls: clonePulls(tool.defaultPulls),
           preview: tool.preview,
-          previewLarge: includeLargePreviews ? tool.previewLarge : ""
+          previewLarge: includeLargePreviews ? tool.previewLarge : "",
+          scaleConfidence: Number.isFinite(tool.scaleConfidence) ? tool.scaleConfidence : null,
+          edgeWarning: !!tool.edgeWarning,
+          manualScale: !!tool.manualScale,
+          corners: Array.isArray(tool.corners) ? tool.corners.map(p => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 })) : null,
+          pageBox: tool.pageBox && Number.isFinite(tool.pageBox.w) ? tool.pageBox : null
         })),
         items: state.items.map(item => ({
           id: item.id,
@@ -872,7 +899,17 @@
         sourceIndex: Number.isFinite(tool.sourceIndex) ? tool.sourceIndex : null,
         defaultPulls: clonePulls(tool.defaultPulls || []),
         preview: tool.preview || "",
-        previewLarge: tool.previewLarge || tool.preview || ""
+        previewLarge: tool.previewLarge || tool.preview || "",
+        scaleConfidence: Number.isFinite(tool.scaleConfidence) ? Number(tool.scaleConfidence) : null,
+        edgeWarning: !!tool.edgeWarning,
+        manualScale: !!tool.manualScale,
+        corners: Array.isArray(tool.corners) && tool.corners.length === 4 ? tool.corners.map(p => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 })) : null,
+        pageBox: tool.pageBox && Number.isFinite(Number(tool.pageBox.w)) ? {
+          x: Number(tool.pageBox.x) || 0,
+          y: Number(tool.pageBox.y) || 0,
+          w: Number(tool.pageBox.w) || 0,
+          h: Number(tool.pageBox.h) || 0
+        } : null
       })).filter(tool => tool.points.length > 2);
       const toolIds = new Set(state.tools.map(tool => tool.id));
       state.items = project.items.map(item => ({
@@ -1022,17 +1059,54 @@
       return state.tools.find(t => !t.accepted) || null;
     }
 
+    function matchToolResult(tool, list) {
+      if (!list || !list.length) return null;
+      if (!tool.pageBox) return list[0];
+      const cx = tool.pageBox.x + tool.pageBox.w / 2;
+      const cy = tool.pageBox.y + tool.pageBox.h / 2;
+      let best = list[0], bestD = Infinity;
+      for (const candidate of list) {
+        const box = candidate.pageBox || { x: 0, y: 0, w: 0, h: 0 };
+        const d = Math.hypot(box.x + box.w / 2 - cx, box.y + box.h / 2 - cy);
+        if (d < bestD) { best = candidate; bestD = d; }
+      }
+      return best;
+    }
+
     async function reprocessTool(toolId) {
       const tool = getTool(toolId);
       if (!tool || !Number.isFinite(tool.sourceIndex) || !state.files[tool.sourceIndex]) {
-        showNotice("Original upload is not available. Import or upload the image again to reprocess.");
+        showNotice("Original upload is not available. Import or upload the image again to reprocess.", "warn");
         return;
       }
       showBusy("Reprocessing contour...", tool.name);
       await nextFrame();
       try {
-        const fresh = await processFile(state.files[tool.sourceIndex], tool.sourceIndex);
-        Object.assign(tool, fresh, { id: tool.id, name: tool.name, accepted: false, fitStatus: "", sourceIndex: tool.sourceIndex });
+        let list;
+        try {
+          list = await processFile(state.files[tool.sourceIndex], tool.sourceIndex, tool.corners || null);
+        } catch (err) {
+          if (!err.paperMissing) throw err;
+          hideBusy();
+          showNotice(err.message, "error");
+          const corners = await openCornerEditor(err.image, tool.corners || null);
+          if (!corners) return;
+          tool.corners = corners;
+          showBusy("Reprocessing contour...", tool.name);
+          list = await processFile(state.files[tool.sourceIndex], tool.sourceIndex, corners);
+        }
+        const fresh = matchToolResult(tool, list);
+        if (!fresh) {
+          showNotice("No tool outline was found on that sheet.", "warn");
+          return;
+        }
+        const name = tool.name;
+        Object.assign(tool, fresh, { id: tool.id, name, accepted: false, fitStatus: "", sourceIndex: tool.sourceIndex });
+        for (const extra of list) {
+          if (extra === fresh) continue;
+          const known = state.tools.some(other => other !== tool && other.sourceIndex === tool.sourceIndex && other.pageBox && extra.pageBox && Math.hypot((other.pageBox.x + other.pageBox.w / 2) - (extra.pageBox.x + extra.pageBox.w / 2), (other.pageBox.y + other.pageBox.h / 2) - (extra.pageBox.y + extra.pageBox.h / 2)) < 18);
+          if (!known) state.tools.push(extra);
+        }
         state.items.filter(i => i.toolId === tool.id).forEach(i => {
           i.pulls = clonePulls(tool.defaultPulls);
           invalidateContourCache(i);
@@ -1042,7 +1116,7 @@
         updateWorkflow();
         showNotice(`${tool.name} reprocessed. Review the contour again.`);
       } catch (err) {
-        showNotice("Could not reprocess contour: " + err.message);
+        showNotice("Could not reprocess contour: " + err.message, "error");
       } finally {
         hideBusy();
       }
@@ -1127,42 +1201,630 @@
       };
     }
 
-    function detectA4Crop(img) {
-      const selectedPaper = PAPER_SIZES[el.paperSize.value] || PAPER_SIZES.a4;
-      const small = drawImageToCanvas(img, 1200);
+    function paperError(img, message) {
+      const err = new Error(message);
+      err.paperMissing = true;
+      err.image = img;
+      return err;
+    }
+
+    function gaussianSolve(A, b) {
+      const n = b.length;
+      const M = A.map((row, i) => row.concat(b[i]));
+      for (let col = 0; col < n; col++) {
+        let pivot = col;
+        for (let r = col + 1; r < n; r++) {
+          if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r;
+        }
+        if (Math.abs(M[pivot][col]) < 1e-12) return null;
+        if (pivot !== col) {
+          const tmp = M[col];
+          M[col] = M[pivot];
+          M[pivot] = tmp;
+        }
+        const div = M[col][col];
+        for (let c = col; c <= n; c++) M[col][c] /= div;
+        for (let r = 0; r < n; r++) {
+          if (r === col) continue;
+          const f = M[r][col];
+          if (f === 0) continue;
+          for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+        }
+      }
+      return M.map(row => row[n]);
+    }
+
+    function matMul3(A, B) {
+      const C = new Array(9).fill(0);
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+          C[r * 3 + c] = A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c];
+        }
+      }
+      return C;
+    }
+
+    function matInv3(M) {
+      const a = M[0], b = M[1], c = M[2], d = M[3], e = M[4], f = M[5], g = M[6], h = M[7], i = M[8];
+      const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g;
+      const D = c * h - b * i, E = a * i - c * g, F = b * g - a * h;
+      const G = b * f - c * e, H = c * d - a * f, I = a * e - b * d;
+      const det = a * A + b * B + c * C;
+      if (Math.abs(det) < 1e-14) return null;
+      const s = 1 / det;
+      return [A * s, D * s, G * s, B * s, E * s, H * s, C * s, F * s, I * s];
+    }
+
+    function similarityOf(pts) {
+      let mx = 0, my = 0;
+      for (const p of pts) { mx += p.x; my += p.y; }
+      mx /= pts.length;
+      my /= pts.length;
+      let acc = 0;
+      for (const p of pts) acc += Math.hypot(p.x - mx, p.y - my);
+      const scale = Math.SQRT2 / (acc / pts.length || 1);
+      return {
+        pts: pts.map(p => ({ x: (p.x - mx) * scale, y: (p.y - my) * scale })),
+        T: [scale, 0, -scale * mx, 0, scale, -scale * my, 0, 0, 1]
+      };
+    }
+
+    function homographyFrom(src, dst) {
+      const S = similarityOf(src);
+      const D = similarityOf(dst);
+      const A = [];
+      const b = [];
+      for (let i = 0; i < 4; i++) {
+        const x = S.pts[i].x, y = S.pts[i].y, X = D.pts[i].x, Y = D.pts[i].y;
+        A.push([x, y, 1, 0, 0, 0, -X * x, -X * y]);
+        b.push(X);
+        A.push([0, 0, 0, x, y, 1, -Y * x, -Y * y]);
+        b.push(Y);
+      }
+      const h = gaussianSolve(A, b);
+      if (!h) return null;
+      const Hn = [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+      const Dinv = matInv3(D.T);
+      if (!Dinv) return null;
+      return matMul3(matMul3(Dinv, Hn), S.T);
+    }
+
+    function applyH(H, x, y) {
+      const w = H[6] * x + H[7] * y + H[8];
+      return { x: (H[0] * x + H[1] * y + H[2]) / w, y: (H[3] * x + H[4] * y + H[5]) / w };
+    }
+
+    function convexHull(points) {
+      const pts = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+      if (pts.length < 4) return pts;
+      const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      const lower = [];
+      for (const p of pts) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+        lower.push(p);
+      }
+      const upper = [];
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+        upper.push(p);
+      }
+      lower.pop();
+      upper.pop();
+      return lower.concat(upper);
+    }
+
+    function quadFromHull(hull) {
+      const n = hull.length;
+      if (n < 4) return null;
+      if (n === 4) return hull.slice();
+      const strength = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = hull[(i + n - 1) % n];
+        const p = hull[i];
+        const b = hull[(i + 1) % n];
+        const v1x = a.x - p.x, v1y = a.y - p.y, v2x = b.x - p.x, v2y = b.y - p.y;
+        const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+        if (l1 < 1e-6 || l2 < 1e-6) { strength[i] = 0; continue; }
+        const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+        strength[i] = Math.PI - Math.acos(cos);
+      }
+      const order = strength.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
+      const chosen = [];
+      const minSep = Math.max(2, Math.floor(n / 12));
+      for (const cand of order) {
+        if (chosen.every(i => Math.min(Math.abs(i - cand.i), n - Math.abs(i - cand.i)) >= minSep)) chosen.push(cand.i);
+        if (chosen.length === 4) break;
+      }
+      if (chosen.length < 4) return null;
+      chosen.sort((a, b) => a - b);
+      return chosen.map(i => hull[i]);
+    }
+
+    function orderCorners(pts) {
+      if (!pts || pts.length !== 4) return null;
+      const score = pts.map((p, i) => ({ i, s: p.x + p.y, d: p.x - p.y }));
+      const tl = score.reduce((a, b) => a.s < b.s ? a : b).i;
+      const br = score.reduce((a, b) => a.s > b.s ? a : b).i;
+      const tr = score.reduce((a, b) => a.d > b.d ? a : b).i;
+      const bl = score.reduce((a, b) => a.d < b.d ? a : b).i;
+      if (new Set([tl, tr, br, bl]).size < 4) return null;
+      const q = [pts[tl], pts[tr], pts[br], pts[bl]];
+      let area = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = q[i], b = q[(i + 1) % 4];
+        area += a.x * b.y - a.y * b.x;
+      }
+      if (area < 30) return null;
+      return q;
+    }
+
+    function fitLine(pts) {
+      let mx = 0, my = 0;
+      for (const p of pts) { mx += p.x; my += p.y; }
+      mx /= pts.length;
+      my /= pts.length;
+      let sxx = 0, sxy = 0, syy = 0;
+      for (const p of pts) {
+        const dx = p.x - mx, dy = p.y - my;
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+      }
+      const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+      return { p: { x: mx, y: my }, dir: { x: Math.cos(theta), y: Math.sin(theta) } };
+    }
+
+    function lineDistance(p, line) {
+      return Math.abs((p.x - line.p.x) * line.dir.y - (p.y - line.p.y) * line.dir.x);
+    }
+
+    function intersectLines(a, b) {
+      const cross = a.dir.x * b.dir.y - a.dir.y * b.dir.x;
+      if (Math.abs(cross) < 1e-8) return null;
+      const dx = b.p.x - a.p.x, dy = b.p.y - a.p.y;
+      const t = (dx * b.dir.y - dy * b.dir.x) / cross;
+      return { x: a.p.x + a.dir.x * t, y: a.p.y + a.dir.y * t };
+    }
+
+    function refineCorners(boundary, quad) {
+      const lines = [];
+      for (let i = 0; i < 4; i++) {
+        const a = quad[i], b = quad[(i + 1) % 4];
+        const abx = b.x - a.x, aby = b.y - a.y;
+        const len2 = abx * abx + aby * aby || 1;
+        const len = Math.sqrt(len2);
+        const band = Math.max(3.5, len * 0.03);
+        const picked = [];
+        for (const p of boundary) {
+          const t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2;
+          if (t < 0.14 || t > 0.86) continue;
+          const dist = Math.abs((p.x - a.x) * aby - (p.y - a.y) * abx) / len;
+          if (dist <= band) picked.push(p);
+        }
+    if (picked.length < 8) {
+      lines.push({ p: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dir: { x: abx / len, y: aby / len } });
+      continue;
+    }
+    let line = fitLine(picked);
+    const kept = picked.filter(p => lineDistance(p, line) <= 2.4);
+    if (kept.length >= 8) line = fitLine(kept);
+    lines.push(line);
+  }
+  const center = { x: (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4, y: (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4 };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let nx = -line.dir.y, ny = line.dir.x;
+    if ((center.x - line.p.x) * nx + (center.y - line.p.y) * ny > 0) { nx = -nx; ny = -ny; }
+    // The thresholded edge sits inside the sheet. Push back toward the true corner.
+    line.p = { x: line.p.x + nx * 1.7, y: line.p.y + ny * 1.7 };
+  }
+  const corners = [];
+      for (let i = 0; i < 4; i++) {
+        const hit = intersectLines(lines[(i + 3) % 4], lines[i]);
+        corners.push(hit || { x: quad[i].x, y: quad[i].y });
+      }
+      return orderCorners(corners) || quad;
+    }
+
+    function bilinearQuad(quad, u, v) {
+      const top = { x: quad[0].x + (quad[1].x - quad[0].x) * u, y: quad[0].y + (quad[1].y - quad[0].y) * u };
+      const bot = { x: quad[3].x + (quad[2].x - quad[3].x) * u, y: quad[3].y + (quad[2].y - quad[3].y) * u };
+      return { x: top.x + (bot.x - top.x) * v, y: top.y + (bot.y - top.y) * v };
+    }
+
+    function cornerAngleDeg(quad, i) {
+      const p = quad[i];
+      const a = quad[(i + 3) % 4];
+      const b = quad[(i + 1) % 4];
+      const v1x = a.x - p.x, v1y = a.y - p.y, v2x = b.x - p.x, v2y = b.y - p.y;
+      const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+      if (l1 < 1e-6 || l2 < 1e-6) return 0;
+      const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+      return Math.acos(cos) * 180 / Math.PI;
+    }
+
+    function paperConfidence(mask, w, h, quad) {
+      let hit = 0, tot = 0;
+      const n = 22;
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const p = bilinearQuad(quad, (i + 0.5) / n, (j + 0.5) / n);
+          const x = Math.round(p.x), y = Math.round(p.y);
+          if (x < 0 || y < 0 || x >= w || y >= h) continue;
+          tot++;
+          if (mask[y * w + x]) hit++;
+        }
+      }
+      const fill = tot ? hit / tot : 0;
+      let ang = 0;
+      for (let i = 0; i < 4; i++) ang += Math.min(1, Math.abs(cornerAngleDeg(quad, i) - 90) / 50);
+      ang /= 4;
+      const margin = Math.min(...quad.flatMap(p => [p.x, p.y, w - 1 - p.x, h - 1 - p.y]));
+      const marginPen = margin < 4 ? 0.12 : margin < 10 ? 0.04 : 0;
+      return Math.max(1, Math.min(99, Math.round(100 * (0.78 * fill + 0.22 * (1 - ang)) - marginPen * 100)));
+    }
+
+    function quadFill(mask, w, h, quad) {
+      let hit = 0, tot = 0;
+      const n = 18;
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const p = bilinearQuad(quad, (i + 0.5) / n, (j + 0.5) / n);
+          const x = Math.round(p.x), y = Math.round(p.y);
+          if (x < 0 || y < 0 || x >= w || y >= h) { tot++; continue; }
+          tot++;
+          if (mask[y * w + x]) hit++;
+        }
+      }
+      return tot ? hit / tot : 0;
+    }
+
+    function findPaperCorners(img) {
+      const small = drawImageToCanvas(img, 1000);
       const data = imageData(small);
       const w = small.width, h = small.height;
-      const mask = new Uint8Array(w * h);
-      for (let i = 0, p = 0; i < data.data.length; i += 4, p++) {
-        const r = data.data[i], g = data.data[i + 1], b = data.data[i + 2];
-        const bright = (r + g + b) / 3;
-        const range = Math.max(r, g, b) - Math.min(r, g, b);
-        if (bright > 120 && range < 85) mask[p] = 1;
+      const bright = new Float32Array(w * h);
+      const sat = new Float32Array(w * h);
+      const hist = new Uint32Array(256);
+      const src = data.data;
+      for (let i = 0, p = 0; i < src.length; i += 4, p++) {
+        const r = src[i], g = src[i + 1], b = src[i + 2];
+        const br = (r + g + b) / 3;
+        bright[p] = br;
+        sat[p] = Math.max(r, g, b) - Math.min(r, g, b);
+        hist[br | 0]++;
       }
-      const paperMask = largestComponent(mask, w, h, 2000);
-      const box = bboxFromMask(paperMask, w, h, 6);
+      let mode = 210, modeCount = 0;
+      for (let v = 150; v < 256; v++) if (hist[v] > modeCount) { modeCount = hist[v]; mode = v; }
+      const thresh = Math.max(125, Math.min(210, mode - 42));
+      let brightCount = 0;
+      for (let v = 150; v < 256; v++) brightCount += hist[v];
+      if (brightCount < w * h * 0.06) {
+        throw paperError(img, "No paper sheet found. Include the whole sheet, with all four corners visible, or place the corners yourself.");
+      }
+      const raw = new Uint8Array(w * h);
+      for (let p = 0; p < bright.length; p++) {
+        if (bright[p] >= thresh && sat[p] < 78) raw[p] = 1;
+      }
+      let closed = boxDilate(raw, w, h, 2);
+      closed = boxErode(closed, w, h, 2);
+      const mask = largestComponent(closed, w, h, Math.round(w * h * 0.08));
+      let area = 0;
+      for (let i = 0; i < mask.length; i++) if (mask[i]) area++;
+      if (area < w * h * 0.08) {
+        throw paperError(img, "No paper sheet found. Include the whole sheet, with all four corners visible, or place the corners yourself.");
+      }
+      let top = 0, bot = 0, left = 0, right = 0;
+      for (let x = 0; x < w; x++) {
+        if (mask[x]) top++;
+        if (mask[(h - 1) * w + x]) bot++;
+      }
+      for (let y = 0; y < h; y++) {
+        if (mask[y * w]) left++;
+        if (mask[y * w + w - 1]) right++;
+      }
+      const edges = (top > w * 0.2 ? 1 : 0) + (bot > w * 0.2 ? 1 : 0) + (left > h * 0.2 ? 1 : 0) + (right > h * 0.2 ? 1 : 0);
+      if (edges >= 3) {
+        throw paperError(img, "The paper corners are cut off, so the scale would be a guess. Include all four corners, or place them yourself.");
+      }
+      const boundary = [];
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const i = y * w + x;
+          if (!mask[i]) continue;
+          if (mask[i - 1] && mask[i + 1] && mask[i - w] && mask[i + w]) continue;
+          if (((x + y) & 1) === 0) boundary.push({ x, y });
+        }
+      }
+      if (boundary.length < 20) {
+        throw paperError(img, "No paper sheet found. Include the whole sheet, with all four corners visible, or place the corners yourself.");
+      }
+      const hull = convexHull(boundary);
+      const rough = orderCorners(quadFromHull(hull));
+      if (!rough) {
+        throw paperError(img, "Could not find the four corners of the sheet. Place them yourself.");
+      }
+      const quad = refineCorners(boundary, rough);
+      const margin = Math.min(...quad.flatMap(p => [p.x, p.y, w - 1 - p.x, h - 1 - p.y]));
+      if (margin < -1) {
+        throw paperError(img, "The paper corners are cut off, so the scale would be a guess. Include all four corners, or place them yourself.");
+      }
+      if (quadFill(mask, w, h, quad) < 0.55) {
+        throw paperError(img, "Could not find the four corners of the sheet. Place them yourself.");
+      }
       const sx = img.naturalWidth / w;
       const sy = img.naturalHeight / h;
-      const paperW = (box.x1 - box.x0) * sx;
-      const paperH = (box.y1 - box.y0) * sy;
-      const landscape = paperW > paperH;
-      const out = document.createElement("canvas");
-      out.width = Math.round((landscape ? selectedPaper.h : selectedPaper.w) * PROC_PX_PER_MM);
-      out.height = Math.round((landscape ? selectedPaper.w : selectedPaper.h) * PROC_PX_PER_MM);
-      out.dataset.orientation = landscape ? "landscape" : "portrait";
-      out.dataset.paperSize = selectedPaper.label;
-      out.getContext("2d").drawImage(
-        img,
-        box.x0 * sx,
-        box.y0 * sy,
-        paperW,
-        paperH,
-        0,
-        0,
-        out.width,
-        out.height
+      return {
+        corners: quad.map(p => ({ x: p.x * sx, y: p.y * sy })),
+        confidence: paperConfidence(mask, w, h, quad)
+      };
+    }
+
+    function orientedPaper(corners, paper) {
+      const top = Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+      const bot = Math.hypot(corners[2].x - corners[3].x, corners[2].y - corners[3].y);
+      const left = Math.hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y);
+      const right = Math.hypot(corners[2].x - corners[1].x, corners[2].y - corners[1].y);
+      const ratio = ((top + bot) / 2) / (((left + right) / 2) || 1);
+      const portraitRatio = Math.min(paper.w, paper.h) / Math.max(paper.w, paper.h);
+      const portraitDist = Math.abs(Math.log(ratio / portraitRatio));
+      const landscapeDist = Math.abs(Math.log(ratio * portraitRatio));
+      const landscape = landscapeDist + 0.08 < portraitDist;
+      const shortSide = Math.min(paper.w, paper.h);
+      const longSide = Math.max(paper.w, paper.h);
+      return {
+        w: landscape ? longSide : shortSide,
+        h: landscape ? shortSide : longSide,
+        landscape
+      };
+    }
+
+    async function warpPaper(img, corners, paper) {
+      const size = orientedPaper(corners, paper);
+      const outW = Math.max(32, Math.round(size.w * PROC_PX_PER_MM));
+      const outH = Math.max(32, Math.round(size.h * PROC_PX_PER_MM));
+      const srcCanvas = drawImageToCanvas(img, 2200);
+      const sx = srcCanvas.width / img.naturalWidth;
+      const sy = srcCanvas.height / img.naturalHeight;
+      const srcCorners = corners.map(p => ({ x: p.x * sx, y: p.y * sy }));
+      const H = homographyFrom(
+        [{ x: 0, y: 0 }, { x: outW, y: 0 }, { x: outW, y: outH }, { x: 0, y: outH }],
+        srcCorners
       );
-      return out;
+      if (!H) throw paperError(img, "Could not rectify the paper. Place the corners yourself.");
+      for (let i = 0; i < 4; i++) {
+        const back = applyH(H, i === 0 || i === 3 ? 0 : outW, i < 2 ? 0 : outH);
+        if (!Number.isFinite(back.x) || Math.hypot(back.x - srcCorners[i].x, back.y - srcCorners[i].y) > 1.5) {
+          throw paperError(img, "Could not rectify the paper. Place the corners yourself.");
+        }
+      }
+      const srcData = imageData(srcCanvas).data;
+      const sw = srcCanvas.width, sh = srcCanvas.height;
+      const out = document.createElement("canvas");
+      out.width = outW;
+      out.height = outH;
+      const ctx2 = out.getContext("2d", { willReadFrequently: true });
+      const imgData = ctx2.createImageData(outW, outH);
+      const dst = imgData.data;
+      for (let y = 0; y < outH; y++) {
+        if ((y & 127) === 0) await nextFrame();
+        const row = y * outW * 4;
+        for (let x = 0; x < outW; x++) {
+          const den = H[6] * x + H[7] * y + H[8];
+          const fx = (H[0] * x + H[1] * y + H[2]) / den;
+          const fy = (H[3] * x + H[4] * y + H[5]) / den;
+          const o = row + x * 4;
+          if (fx < 0 || fy < 0 || fx >= sw - 1 || fy >= sh - 1) {
+            dst[o] = dst[o + 1] = dst[o + 2] = 255;
+            dst[o + 3] = 255;
+            continue;
+          }
+          const x0 = fx | 0, y0 = fy | 0;
+          const dx = fx - x0, dy = fy - y0;
+          const i00 = (y0 * sw + x0) * 4;
+          const i10 = i00 + 4;
+          const i01 = i00 + sw * 4;
+          const i11 = i01 + 4;
+          const w00 = (1 - dx) * (1 - dy), w10 = dx * (1 - dy), w01 = (1 - dx) * dy, w11 = dx * dy;
+          dst[o] = srcData[i00] * w00 + srcData[i10] * w10 + srcData[i01] * w01 + srcData[i11] * w11;
+          dst[o + 1] = srcData[i00 + 1] * w00 + srcData[i10 + 1] * w10 + srcData[i01 + 1] * w01 + srcData[i11 + 1] * w11;
+          dst[o + 2] = srcData[i00 + 2] * w00 + srcData[i10 + 2] * w10 + srcData[i01 + 2] * w01 + srcData[i11 + 2] * w11;
+          dst[o + 3] = 255;
+        }
+      }
+      ctx2.putImageData(imgData, 0, 0);
+      out.dataset.orientation = size.landscape ? "landscape" : "portrait";
+      out.dataset.paperSize = paper.label;
+      return { canvas: out, corners, size };
+    }
+
+    async function detectAndRectify(img, manualCorners) {
+      const paper = PAPER_SIZES[el.paperSize.value] || PAPER_SIZES.a4;
+      if (manualCorners && manualCorners.length === 4) {
+        const page = await warpPaper(img, manualCorners, paper);
+        page.confidence = 90;
+        page.manual = true;
+        return page;
+      }
+      const found = findPaperCorners(img);
+      const page = await warpPaper(img, found.corners, paper);
+      page.confidence = found.confidence;
+      page.manual = false;
+      return page;
+    }
+
+    function countMask(mask) {
+      let n = 0;
+      for (let i = 0; i < mask.length; i++) if (mask[i]) n++;
+      return n;
+    }
+
+    function splitComponents(mask, w, h, minArea) {
+      const seen = new Uint8Array(w * h);
+      const parts = [];
+      const q = [];
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i] || seen[i]) continue;
+        q.length = 0;
+        let head = 0;
+        q.push(i);
+        seen[i] = 1;
+        const idx = [];
+        while (head < q.length) {
+          const cur = q[head++];
+          idx.push(cur);
+          const x = cur % w;
+          const y = (cur / w) | 0;
+          if (x > 0 && mask[cur - 1] && !seen[cur - 1]) { seen[cur - 1] = 1; q.push(cur - 1); }
+          if (x + 1 < w && mask[cur + 1] && !seen[cur + 1]) { seen[cur + 1] = 1; q.push(cur + 1); }
+          if (y > 0 && mask[cur - w] && !seen[cur - w]) { seen[cur - w] = 1; q.push(cur - w); }
+          if (y + 1 < h && mask[cur + w] && !seen[cur + w]) { seen[cur + w] = 1; q.push(cur + w); }
+        }
+        if (idx.length < minArea) continue;
+        const part = new Uint8Array(w * h);
+        for (const p of idx) part[p] = 1;
+        parts.push(part);
+      }
+      return parts;
+    }
+
+    function componentNearEdge(mask, w, h, mm) {
+      const px = mm * PROC_PX_PER_MM;
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        const x = i % w;
+        const y = (i / w) | 0;
+        if (x < x0) x0 = x;
+        if (y < y0) y0 = y;
+        if (x > x1) x1 = x;
+        if (y > y1) y1 = y;
+      }
+      if (x1 < 0) return false;
+      return x0 < px || y0 < px || (w - 1 - x1) < px || (h - 1 - y1) < px;
+    }
+
+    function borderHeavy(mask, w, h) {
+      const px = 4 * PROC_PX_PER_MM;
+      let border = 0, total = 0;
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        total++;
+        const x = i % w;
+        const y = (i / w) | 0;
+        if (x < px || y < px || x >= w - px || y >= h - px) border++;
+      }
+      return total > 0 && border / total > 0.5;
+    }
+
+    function walkRamps(mask, bright, w, h, maxPx) {
+      const grad = new Float32Array(w * h);
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const i = y * w + x;
+          grad[i] = Math.abs(bright[i + 1] - bright[i - 1]) + Math.abs(bright[i + w] - bright[i - w]);
+        }
+      }
+      const dist = new Int16Array(w * h);
+      dist.fill(-1);
+      const q = new Int32Array(w * h);
+      let head = 0, tail = 0;
+      for (let i = 0; i < mask.length; i++) if (mask[i]) { dist[i] = 0; q[tail++] = i; }
+      while (head < tail) {
+        const i = q[head++];
+        const d = dist[i];
+        if (d >= maxPx) continue;
+        const x = i % w;
+        const y = (i / w) | 0;
+        const consider = n => {
+          if (dist[n] !== -1) return;
+          if (bright[n] > 216) return;
+          const delta = bright[n] - bright[i];
+      if (delta > 26 || delta < -12) return;
+      if (d > 2 && Math.abs(delta) < 1.3 && grad[n] < 10) return;
+          dist[n] = d + 1;
+          mask[n] = 1;
+          q[tail++] = n;
+        };
+        if (x > 0) consider(i - 1);
+        if (x + 1 < w) consider(i + 1);
+        if (y > 0) consider(i - w);
+        if (y + 1 < h) consider(i + w);
+      }
+    }
+
+    function maskBBoxMm(mask, w, h) {
+      let x0 = w, y0 = h, x1 = 0, y1 = 0, any = false;
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        any = true;
+        const x = i % w;
+        const y = (i / w) | 0;
+        if (x < x0) x0 = x;
+        if (y < y0) y0 = y;
+        if (x > x1) x1 = x;
+        if (y > y1) y1 = y;
+      }
+      if (!any) return { x: 0, y: 0, w: 0, h: 0 };
+      return {
+        x: x0 / PROC_PX_PER_MM,
+        y: y0 / PROC_PX_PER_MM,
+        w: (x1 - x0 + 1) / PROC_PX_PER_MM,
+        h: (y1 - y0 + 1) / PROC_PX_PER_MM
+      };
+    }
+
+    function segmentTools(pageCanvas, metalRepairMm) {
+      const data = imageData(pageCanvas);
+      const w = pageCanvas.width, h = pageCanvas.height;
+      const n = w * h;
+      const bright = new Float32Array(n);
+      const sat = new Float32Array(n);
+      const px = data.data;
+      for (let i = 0, p = 0; i < px.length; i += 4, p++) {
+        const r = px[i], g = px[i + 1], b = px[i + 2];
+        bright[p] = (r + g + b) / 3;
+        sat[p] = Math.max(r, g, b) - Math.min(r, g, b);
+      }
+      const local = boxBlurFloat(bright, w, h, Math.max(2, Math.round(9 * PROC_PX_PER_MM)));
+      const mask = new Uint8Array(n);
+      for (let p = 0; p < n; p++) {
+        const norm = bright[p] / Math.max(30, local[p]);
+        const darkCore = norm < 0.58 && bright[p] < 175;
+        const colorful = sat[p] > 42 && bright[p] < 205 && norm < 0.9;
+        if (darkCore || colorful) mask[p] = 1;
+      }
+      let clean = boxErode(boxDilate(mask, w, h, 1), w, h, 1);
+      walkRamps(clean, bright, w, h, Math.round(16 * PROC_PX_PER_MM));
+      const fringe = Math.max(1, Math.round(2 * PROC_PX_PER_MM));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (x < fringe || y < fringe || x >= w - fringe || y >= h - fringe) clean[y * w + x] = 0;
+        }
+      }
+      clean = boxErode(boxDilate(clean, w, h, 1), w, h, 1);
+      const minArea = Math.round(150 * PROC_PX_PER_MM * PROC_PX_PER_MM);
+      const bridge = Math.round(Math.max(0, metalRepairMm) * PROC_PX_PER_MM);
+      const parts = splitComponents(clean, w, h, minArea)
+        .filter(part => !borderHeavy(part, w, h))
+        .map(part => {
+          let m = part;
+          if (bridge > 0) {
+            m = boxDilate(m, w, h, bridge);
+            m = fillInteriorHoles(m, w, h);
+            m = boxErode(m, w, h, bridge);
+          } else {
+            m = fillInteriorHoles(m, w, h);
+          }
+          m = boxDilate(m, w, h, 1);
+          m = fillInteriorHoles(m, w, h);
+          m = boxErode(m, w, h, 1);
+          return { mask: m, w, h, edgeWarning: componentNearEdge(m, w, h, 12), area: countMask(m) };
+        })
+        .filter(part => part.area >= minArea && !borderHeavy(part.mask, w, h));
+      parts.sort((a, b) => b.area - a.area);
+      return parts.slice(0, 8);
     }
 
     function fillInteriorHoles(mask, w, h) {
@@ -1623,29 +2285,53 @@
       return c.toDataURL("image/png");
     }
 
-    async function processFile(file, index) {
+    async function processFile(file, index, manualCorners) {
       const img = await loadImage(file);
-      const page = detectA4Crop(img);
-      const { mask, w, h } = makeToolMask(page, Number(el.metalRepairInput.value));
-      const offsetPx = Math.round(Number(el.offsetInput.value) * PROC_PX_PER_MM);
-      let cut = boxDilate(mask, w, h, offsetPx);
-      let contour = traceMask(cut, w, h);
-      contour = smoothContour(contour, Number(el.spacingInput.value), Number(el.smoothInput.value));
-      const norm = normalizeMm(contour);
-      const tool = {
-        id: "tool-" + Date.now() + "-" + index,
-        name: file.name.replace(/\.[^.]+$/, ""),
-        points: norm.points,
-        width: norm.width,
-        height: norm.height,
-        accepted: false,
-        fitStatus: "",
-        sourceIndex: index,
-        defaultPulls: defaultFingerPulls(norm.points, norm.width, norm.height, Number(el.fingerInput.value)),
-        preview: previewCanvas(page, contour, 170, 220),
-        previewLarge: previewCanvas(page, contour, 760, 980)
-      };
-      return tool;
+      const page = await detectAndRectify(img, manualCorners || null);
+      const parts = segmentTools(page.canvas, Number(el.metalRepairInput.value));
+      const offsetPx = Math.max(0, Math.round(Number(el.offsetInput.value) * PROC_PX_PER_MM));
+      const baseName = String(file.name || "tool").replace(/\.[^.]+$/, "");
+      const tools = [];
+      for (let k = 0; k < parts.length; k++) {
+        const part = parts[k];
+        const cut = offsetPx > 0 ? boxDilate(part.mask, part.w, part.h, offsetPx) : part.mask;
+        let contour;
+        try {
+          contour = traceMask(cut, part.w, part.h);
+        } catch (err) {
+          continue;
+        }
+        if (!contour || contour.length < 8) continue;
+        contour = smoothContour(contour, Number(el.spacingInput.value), Number(el.smoothInput.value));
+        const norm = normalizeMm(contour);
+        if (norm.width < 8 || norm.height < 8) continue;
+        state.toolSeq = (state.toolSeq || 0) + 1;
+        tools.push({
+          id: "tool-" + Date.now().toString(36) + "-" + state.toolSeq,
+          name: parts.length > 1 ? baseName + " " + (k + 1) : baseName,
+          points: norm.points,
+          width: norm.width,
+          height: norm.height,
+          accepted: false,
+          fitStatus: "",
+          sourceIndex: index,
+          defaultPulls: defaultFingerPulls(norm.points, norm.width, norm.height, Number(el.fingerInput.value)),
+          preview: previewCanvas(page.canvas, contour, 170, 220),
+          previewLarge: previewCanvas(page.canvas, contour, 760, 980),
+          scaleConfidence: page.confidence,
+          edgeWarning: part.edgeWarning,
+          corners: page.corners.map(p => ({ x: p.x, y: p.y })),
+          pageBox: maskBBoxMm(part.mask, part.w, part.h),
+          manualScale: !!page.manual
+        });
+      }
+      if (!tools.length) {
+        const err = new Error("The sheet was found, but no tool outline was detected. Use a darker tool on plain paper, and keep it off the edge.");
+        err.noTool = true;
+        err.image = img;
+        throw err;
+      }
+      return tools;
     }
 
     function polygonCentroid(points) {
@@ -1827,7 +2513,19 @@
         const d = document.createElement("div");
         d.className = "tool" + (selected && selected.toolId === tool.id ? " sel" : "");
         d.dataset.toolId = tool.id;
-        d.innerHTML = `<img class="th" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><small>${tool.width.toFixed(0)} × ${tool.height.toFixed(0)} mm</small></div><span class="badge ${status.cls}">${status.text}</span>`;
+        const conf = Number.isFinite(tool.scaleConfidence) ? ` · ${Math.round(tool.scaleConfidence)}% scale` : "";
+        const edgeNote = tool.edgeWarning ? " · near edge" : "";
+        d.dataset.widthMm = tool.width.toFixed(2);
+        d.dataset.heightMm = tool.height.toFixed(2);
+        if (tool.pageBox) {
+          d.dataset.boxX = Number(tool.pageBox.x).toFixed(2);
+          d.dataset.boxY = Number(tool.pageBox.y).toFixed(2);
+          d.dataset.boxW = Number(tool.pageBox.w).toFixed(2);
+          d.dataset.boxH = Number(tool.pageBox.h).toFixed(2);
+        }
+        d.dataset.confidence = Number.isFinite(tool.scaleConfidence) ? String(Math.round(tool.scaleConfidence)) : "";
+        d.dataset.edge = tool.edgeWarning ? "1" : "";
+        d.innerHTML = `<img class="th" src="${tool.preview}" alt=""><div><strong>${escapeHtml(tool.name)}</strong><small>${tool.width.toFixed(0)} × ${tool.height.toFixed(0)} mm${conf}${edgeNote}</small></div><span class="badge ${status.cls}">${status.text}</span>`;
         d.addEventListener("click", () => {
           const item = state.items.find(i => i.toolId === tool.id);
           if (item) {
@@ -4265,6 +4963,42 @@
       el.importProjectInput.value = "";
     });
 
+    function announceScale(found) {
+      const conf = found[0].scaleConfidence;
+      const notes = [];
+      if (!found[0].manualScale && Number.isFinite(conf) && conf < 75) {
+        notes.push(`Scale confidence ${Math.round(conf)}%. Check the measured size before printing.`);
+      }
+      if (found.some(tool => tool.edgeWarning)) notes.push("A tool sits close to the paper edge, so its outline may be clipped.");
+      if (found.length > 1) notes.push(`${found.length} tools found on this sheet.`);
+      if (!notes.length) return;
+      const warn = found.some(tool => tool.edgeWarning) || (!found[0].manualScale && Number.isFinite(conf) && conf < 75);
+      showNotice(notes.join(" "), warn ? "warn" : "success");
+    }
+
+    async function ingestPhoto(file, sourceIndex) {
+      try {
+        return await processFile(file, sourceIndex);
+      } catch (err) {
+        if (err.noTool) {
+          showNotice(err.message, "warn");
+          return [];
+        }
+        if (!err.paperMissing) throw err;
+        hideBusy();
+        showNotice(err.message, "error");
+        const corners = await openCornerEditor(err.image);
+        if (!corners) return [];
+        showBusy("Detecting tools...", "Using the corners you placed.");
+        try {
+          return await processFile(file, sourceIndex, corners);
+        } catch (err2) {
+          showNotice(err2.message || "Could not use those corners.", err2.noTool ? "warn" : "error");
+          return [];
+        }
+      }
+    }
+
     async function detectPending() {
       if (!state.pendingFiles.length) {
         setStatus("Choose one or more images first.");
@@ -4272,28 +5006,139 @@
       }
       if (el.processBtn.disabled) return;
       el.processBtn.disabled = true;
+      showBusy("Detecting tools...", "Finding the paper and measuring each outline.");
       try {
         state.lastArrangeReport = null;
         const batch = state.pendingFiles.slice();
+        let added = 0;
         for (let i = 0; i < batch.length; i++) {
           setStatus(`Processing ${i + 1} of ${batch.length}: ${batch[i].name}`);
+          el.busyDetail.textContent = batch[i].name;
           state.files.push(batch[i]);
           const sourceIndex = state.files.length - 1;
-          const tool = await processFile(batch[i], sourceIndex);
-          state.tools.push(tool);
+          const found = await ingestPhoto(batch[i], sourceIndex);
+          found.forEach(tool => state.tools.push(tool));
+          added += found.length;
+          if (found.length) announceScale(found);
         }
         state.pendingFiles = [];
         el.fileInput.value = "";
-        showPanel("review");
-        showPreview(nextUnacceptedTool());
-        setStatus(`${batch.length} contour(s) detected. Review and accept them before adding to the drawer.`);
+        const next = nextUnacceptedTool();
+        if (next) {
+          showPanel("review");
+          showPreview(next);
+        }
+        setStatus(added ? `${added} contour(s) detected. Review and accept them before adding to the drawer.` : "No contours were added.");
       } catch (err) {
         console.error(err);
         showNotice("Could not process image: " + err.message, "error");
       } finally {
         el.processBtn.disabled = false;
+        hideBusy();
         renderAll();
       }
+    }
+
+    function openCornerEditor(img, initial) {
+      return new Promise(resolve => {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const points = (initial && initial.length === 4 ? initial : [
+          { x: w * 0.08, y: h * 0.08 },
+          { x: w * 0.92, y: h * 0.08 },
+          { x: w * 0.92, y: h * 0.92 },
+          { x: w * 0.12, y: h * 0.92 }
+        ]).map(p => ({ x: p.x, y: p.y }));
+        const canvas = el.cornerCanvas;
+        const maxW = Math.min(820, Math.max(280, window.innerWidth - 80));
+        const maxH = Math.min(640, Math.max(220, window.innerHeight - 220));
+        const scale = Math.min(maxW / w, maxH / h, 1);
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
+        const g = canvas.getContext("2d");
+        let drag = -1;
+        let settled = false;
+        function toImg(ev) {
+          const r = canvas.getBoundingClientRect();
+          return {
+            x: (ev.clientX - r.left) / r.width * w,
+            y: (ev.clientY - r.top) / r.height * h
+          };
+        }
+        function draw() {
+          g.drawImage(img, 0, 0, canvas.width, canvas.height);
+          g.strokeStyle = "#F7F1E6";
+          g.lineWidth = 2;
+          g.beginPath();
+          points.forEach((p, i) => {
+            const x = p.x / w * canvas.width, y = p.y / h * canvas.height;
+            if (i === 0) g.moveTo(x, y);
+            else g.lineTo(x, y);
+          });
+          g.closePath();
+          g.stroke();
+          points.forEach((p, i) => {
+            const x = p.x / w * canvas.width, y = p.y / h * canvas.height;
+            g.fillStyle = "#D63820";
+            g.beginPath();
+            g.arc(x, y, 8, 0, Math.PI * 2);
+            g.fill();
+            g.fillStyle = "#fff";
+            g.font = "700 12px Inter, sans-serif";
+            g.fillText(String(i + 1), x - 4, y + 4);
+          });
+        }
+        function hit(ev) {
+          const p = toImg(ev);
+          const r = canvas.getBoundingClientRect();
+          const tol = 22 / r.width * w;
+          let best = -1, bestD = tol;
+          points.forEach((q, i) => {
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            if (d <= bestD) { best = i; bestD = d; }
+          });
+          return best;
+        }
+        function down(ev) {
+          drag = hit(ev);
+          if (drag >= 0) {
+            canvas.setPointerCapture?.(ev.pointerId);
+            ev.preventDefault();
+          }
+        }
+        function move(ev) {
+          if (drag < 0) return;
+          const p = toImg(ev);
+          points[drag].x = Math.max(0, Math.min(w - 1, p.x));
+          points[drag].y = Math.max(0, Math.min(h - 1, p.y));
+          draw();
+        }
+        function up() { drag = -1; }
+        function finish(result) {
+          if (settled) return;
+          settled = true;
+          state.cornerCancel = null;
+          canvas.removeEventListener("pointerdown", down);
+          canvas.removeEventListener("pointermove", move);
+          canvas.removeEventListener("pointerup", up);
+          canvas.removeEventListener("pointercancel", up);
+          el.cornerApply.removeEventListener("click", apply);
+          el.cornerCancel.removeEventListener("click", cancel);
+          el.cornerModal.classList.add("hidden");
+          resolve(result ? result.map(p => ({ x: p.x, y: p.y })) : null);
+        }
+        function apply() { finish(points); }
+        function cancel() { finish(null); }
+        canvas.addEventListener("pointerdown", down);
+        canvas.addEventListener("pointermove", move);
+        canvas.addEventListener("pointerup", up);
+        canvas.addEventListener("pointercancel", up);
+        el.cornerApply.addEventListener("click", apply);
+        el.cornerCancel.addEventListener("click", cancel);
+        state.cornerCancel = cancel;
+        el.cornerModal.classList.remove("hidden");
+        draw();
+      });
     }
 
     el.processBtn.addEventListener("click", detectPending);
@@ -4531,6 +5376,18 @@
     el.reprocessPreview.addEventListener("click", () => {
       if (state.previewToolId) reprocessTool(state.previewToolId);
     });
+    el.adjustCorners.addEventListener("click", async () => {
+      const tool = getTool(state.previewToolId);
+      if (!tool || !Number.isFinite(tool.sourceIndex) || !state.files[tool.sourceIndex]) {
+        showNotice("The original photo is not available. Upload it again to adjust the corners.", "warn");
+        return;
+      }
+      const img = await loadImage(state.files[tool.sourceIndex]);
+      const corners = await openCornerEditor(img, tool.corners || null);
+      if (!corners) return;
+      tool.corners = corners;
+      await reprocessTool(tool.id);
+    });
 
     el.previewName.addEventListener("input", () => {
       const tool = getTool(state.previewToolId);
@@ -4596,12 +5453,13 @@
         return;
       }
       if (ev.key === "Escape") {
+        if (state.cornerCancel) { state.cornerCancel(); return; }
         if (!el.helpModal.classList.contains("hidden")) { el.helpModal.classList.add("hidden"); return; }
         if (!el.exportModal.classList.contains("hidden")) { hideExportPreview(); return; }
         if (!el.previewModal.classList.contains("hidden")) hidePreview();
         return;
       }
-      if (!el.previewModal.classList.contains("hidden") || !el.exportModal.classList.contains("hidden") || !el.helpModal.classList.contains("hidden")) return;
+      if (state.cornerCancel || !el.previewModal.classList.contains("hidden") || !el.exportModal.classList.contains("hidden") || !el.helpModal.classList.contains("hidden")) return;
       const item = getSelectedItem();
       if (!item || item.locked || typing) return;
       const step = ev.shiftKey ? 10 : 1;
