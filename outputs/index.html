@@ -361,11 +361,28 @@
                 <div class="stack">
                   <div class="grid2">
                     <label>Board thickness mm<input id="stlThicknessInput" type="number" value="18" min="3" step="0.5"></label>
-                    <label>Wall / skin mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
+                    <label>Perimeter wall mm<input id="stlWallInput" type="number" value="2" min="0.8" step="0.1"></label>
                   </div>
                   <div class="grid2"><label>Infill %<input id="print-infillPercent" type="number" value="15" min="0" step="1"></label><label>Perimeters<input id="print-perimeters" type="number" value="3" min="0" step="1"></label><label>Line width mm<input id="print-lineWidth" type="number" value="0.45" min="0" step=".01"></label><label>Layer height mm<input id="print-layerHeight" type="number" value="0.2" min="0" step=".01"></label><label>Top layers<input id="print-topLayers" type="number" value="4" min="0" step="1"></label><label>Bottom layers<input id="print-bottomLayers" type="number" value="4" min="0" step="1"></label><label>Effective flow mm³/s<input id="print-flow" type="number" value="7" min="0" step="1"></label></div>
-                  <label>STL cavity detail mm<input id="stlResolutionInput" type="number" value="1.5" min="0.75" max="4" step="0.25"></label>
-                  <p class="note">The solid skin prints on the bed and each pocket keeps a floor. A large board coarsens the cavity grid on its own.</p>
+                  <input id="stlResolutionInput" type="hidden" value="1.5">
+                  <div class="grid2">
+                    <label>Top plate mm<input id="shell-plate" type="number" value="2.5" min=".5" max="20" step=".1"></label>
+                    <label>Pocket wall mm<input id="shell-pocketWall" type="number" value="1.6" min=".5" max="8" step=".1"></label>
+                    <label>Pocket floor mm<input id="shell-floor" type="number" value="1.6" min=".5" max="8" step=".1"></label>
+                    <label>Floor chamfer mm<input id="shell-floorBevel" type="number" value=".8" min="0" max="4" step=".1"></label>
+                    <label>Default tool thickness mm<input id="shell-defaultThickness" type="number" value="14" min="1" max="80" step=".1"></label>
+                    <label>Depth allowance mm<input id="shell-depthAllowance" type="number" value="1" min="0" max="8" step=".1"></label>
+                    <label>Notch radius mm<input id="shell-notchRadius" type="number" value="12" min="1" max="40" step=".5"></label>
+                    <label>Rib thickness mm<input id="shell-ribWidth" type="number" value="1.2" min=".5" max="8" step=".1"></label>
+                    <label>Rib spacing mm<input id="shell-ribSpacing" type="number" value="80" min="10" max="300" step="1"></label>
+                  </div>
+                  <label><input id="shell-ribs" type="checkbox" checked> Stiffening ribs</label>
+                  <label><input id="shell-notches" type="checkbox" checked> Finger notches</label>
+                  <details><summary>Tool thickness from calipers</summary>
+                    <p class="note">Enter measured thickness for each tool. Blank fields use the default tool thickness or a saved custom pocket depth.</p>
+                    <div id="shell-calipers" class="grid2"></div>
+                  </details>
+                  <p class="note">The perforated top prints against the bed. Pocket floors bridge over the openings.</p>
                   <label>Printer bed
                     <select id="bedPreset">
                       <option value="a1mini">Bambu A1 mini — 180 × 180</option>
@@ -592,8 +609,11 @@
 <script src="vendor/earcut-2.2.4.min.js"></script>
 <script src="vendor/polygon-clipping-0.15.7.min.js"></script>
 <script src="print-estimates.js"></script>
+<script src="vendor/clipper-6.4.2.js"></script>
+<script src="inverted-shell.js"></script>
 <script>
     const printEstimator=createPrintEstimator();
+    const shellGeometry = createInvertedShellGeometry();
 
     const PAPER_SIZES = {
       a4: { label: "A4", w: 210, h: 297 },
@@ -826,6 +846,7 @@
         rot: item.rot,
         locked: !!item.locked,
         pulls: clonePulls(itemPulls(item)),
+        printToolThickness: Number(item.printToolThickness) || null,
         pocketDepth: Number(item.pocketDepth) || 15
       }));
     }
@@ -840,6 +861,7 @@
         rot: Number(item.rot) || 0,
         locked: !!item.locked,
         pulls: clonePulls(item.pulls || []),
+        printToolThickness: Number(item.printToolThickness) || null,
         pocketDepth: Number(item.pocketDepth) || 15
       })).filter(item => toolIds.has(item.toolId));
       state.selectedId = state.items[0]?.id || null;
@@ -957,6 +979,7 @@
           arrangeSpacing: Number(el.arrangeSpacingInput.value),
           arrangeTime: Number(el.arrangeTimeInput.value),
           finger: Number(el.fingerInput.value),
+          shellOptions: shellOptions(),
           stlThickness: Number(el.stlThicknessInput.value),
           stlWall: Number(el.stlWallInput.value),
           stlResolution: Number(el.stlResolutionInput.value),
@@ -997,6 +1020,7 @@
           rot: item.rot,
           locked: !!item.locked,
           pulls: clonePulls(itemPulls(item)),
+          printToolThickness: item.printToolThickness || null,
           pocketDepth: Number(item.pocketDepth) || Number(getTool(item.toolId)?.pocketDepth) || 15
         })),
         selectedId: state.selectedId
@@ -1022,6 +1046,8 @@
       el.arrangeSpacingInput.value = settings.arrangeSpacing ?? 10;
       el.arrangeTimeInput.value = settings.arrangeTime ?? 8;
       el.fingerInput.value = settings.finger ?? 14;
+      shellOptions(settings.shellOptions || {});
+      document.getElementById("shell-calipers").dataset.items = "";
       el.stlThicknessInput.value = settings.stlThickness ?? 18;
       el.stlWallInput.value = settings.stlWall ?? 2;
       el.stlResolutionInput.value = Math.min(4, Math.max(0.75, Number(settings.stlResolution ?? 1.5)));
@@ -1071,6 +1097,7 @@
         rot: Number(item.rot) || 0,
         locked: !!item.locked,
         pulls: clonePulls(item.pulls || []),
+        printToolThickness: Number(item.printToolThickness) || null,
         pocketDepth: Number(item.pocketDepth) || 15
       })).filter(item => toolIds.has(item.toolId));
       state.selectedId = state.items.some(item => item.id === project.selectedId) ? project.selectedId : (state.items[0]?.id || null);
@@ -3849,7 +3876,7 @@
       poly([S(0, 0, 0), S(dw, 0, 0), S(dw, 0, thickness), S(0, 0, thickness)], "#E3D5B8", "#1B4532");
       poly([S(dw, 0, 0), S(dw, dh, 0), S(dw, dh, thickness), S(dw, 0, thickness)], "#CDBF9F", "#1B4532");
       poly([S(0, 0, thickness), S(dw, 0, thickness), S(dw, dh, thickness), S(0, dh, thickness)], "#FBFAF7", "#1B4532");
-      const skin = Math.max(0.8, Number(el.stlWallInput.value) || 2);
+      const settings = printSettings();
       const depthReadout = document.getElementById("pocketDepthReadout");
       depthReadout.classList.add("hidden");
       const trace = points => {
@@ -3860,8 +3887,8 @@
       state.items.forEach(item => {
         const tool = getTool(item.toolId);
         if (!tool) return;
-        const depth = Math.max(0, Math.min(thickness - skin, Number(item.pocketDepth || tool.pocketDepth) || 15));
-        const world = combinedLocalPoints(item).map(p => transformPoint(p, item, tool));
+        const {depth} = shellGeometry.dimensions(settings,{depth:printPocketDepth(item,tool,settings)});
+        const world = exportOpening(item,tool,settings);
         if (world.length < 3) return;
         const rim = world.map(p => S(p.x, p.y, thickness));
         const floor = world.map(p => S(p.x, p.y, thickness - depth));
@@ -4790,260 +4817,90 @@ function conformMesh(tris) {
   }return tris;
 }
 
+    function checkTopOpenings(content, outline, voids, drawer, name) {
+      const face = readStlTriangles(content).filter(t => t.every(p => p.z === 0));
+      // Interior triangulation edges cancel. The remaining directed edges trace
+      // the exported planar face and preserve the winding of its openings.
+      const boundary = new Map();
+      const vertexKey = p => p.x + "," + p.y;
+      for (const t of face) for (let i=0;i<3;i++) {
+        const a=t[i], b=t[(i+1)%3], from=vertexKey(a), to=vertexKey(b);
+        const reverse=to+"|"+from;
+        if (!boundary.delete(reverse)) boundary.set(from+"|"+to,{a,from,to});
+      }
+      const outgoing = new Map([...boundary.values()].map(e=>[e.from,e]));
+      const materialOnBed = [];
+      while (outgoing.size) {
+        const first = outgoing.values().next().value;
+        const loop = [];
+        let current = first;
+        do {
+          if (!current || !outgoing.delete(current.from)) throw Error("Broken STL top-face boundary.");
+          loop.push(current.a);
+          if (current.to===first.from) break;
+          current=outgoing.get(current.to);
+        } while (true);
+        const ring = shellGeometry.path(loop);
+        if (signedArea2(loop)>0) ring.reverse();
+        materialOnBed.push(ring);
+      }
+      const reflect = ring => shellGeometry.path(ring.map(shellGeometry.mm).map(p => ({x:p.x,y:drawer.h-p.y})));
+      const outer = outline.map(reflect);
+      const actual = shellGeometry.minus(outer,materialOnBed);
+      const expected = voids.map(reflect);
+      const intersection = shellGeometry.area(shellGeometry.intersect(expected,actual));
+      const combined = shellGeometry.area(shellGeometry.union([...expected,...actual]));
+      const iou = combined ? intersection / combined : 1;
+      const pockets = expected.map(loop => {
+        const outlineArea = shellGeometry.area([loop]);
+        return shellGeometry.area(shellGeometry.intersect([loop],actual)) / outlineArea;
+      });
+      if (iou < .95 || pockets.some(overlap => overlap < .95)) {
+        throw Error(name + " top openings do not match the DXF frame (IoU " + iou.toFixed(4) + ").");
+      }
+      return {passed:true, iou, checked:pockets.length, pockets};
+    }
+
     function makePrintableShellStl(cutEntities, drawer, settings) {
-      const thickness = Math.max(3, Number(settings.thickness) || 18);
-      const skin = Math.max(0.8, Number(settings.wall) || 2);
-      const rim = Math.max(skin, Number(settings.rim) || skin);
-      const chamfer = Math.max(0, Math.min(1.2, Number(settings.chamfer) || 0));
-      if (skin >= thickness - 0.4) throw new Error("Wall / skin thickness must be smaller than board thickness.");
-      const requestedPitch = Math.min(4, Math.max(0.75, Number(settings.pitch) || 1.5));
-      let pitch = requestedPitch;
-      let cols = Math.ceil(drawer.w / pitch);
-      let rows = Math.ceil(drawer.h / pitch);
-      while (cols * rows > 350000 && pitch < 12) {
-        pitch = Math.min(12, pitch * 1.25);
-        cols = Math.ceil(drawer.w / pitch);
-        rows = Math.ceil(drawer.h / pitch);
-      }
-
-      const faceMeshSize = Math.max(8, Math.min(18, Math.max(drawer.w, drawer.h) / 40));
-      const loopStep = Math.min(faceMeshSize, Math.max(1.2, skin * 1.6));
-
-      const cuts = [];
-      (cutEntities || []).forEach(ent => {
-        const loop0 = simplifyClosedLoop(toOpenLoop(ent.points), 0.05);
-        if (loop0.length < 3 || Math.abs(signedArea2(loop0)) / 2 <= 1) return;
-        let loop = signedArea2(loop0) > 0 ? loop0 : loop0.slice().reverse();
-        loop = densifyLoop(loop, loopStep);
-        const depth = Math.min(thickness - skin, Math.max(0.4, Number(ent.depth) || 15));
-        cuts.push({ loop, floorZ: thickness - depth, depth });
-      });
-
-      const maskCuts = cuts.map(cut => {
-        const coarse = simplifyClosedLoop(cut.loop, pitch * 0.15);
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        coarse.forEach(p => {
-          minX = Math.min(minX, p.x);
-          maxX = Math.max(maxX, p.x);
-          minY = Math.min(minY, p.y);
-          maxY = Math.max(maxY, p.y);
-        });
-        return { loop: coarse, closed: coarse.concat([coarse[0]]), minX, minY, maxX, maxY };
-      });
-
-      const cellCount = cols * rows;
-      const band = rim + pitch * 0.6;
-      const cavityMask = new Uint8Array(cellCount);
-      for (let r = 0; r < rows; r++) {
-        const py = (r + 0.5) * pitch;
-        if (py <= band || py >= drawer.h - band) continue;
-        for (let c = 0; c < cols; c++) {
-          const px = (c + 0.5) * pitch;
-          if (px <= band || px >= drawer.w - band) continue;
-          const p = { x: px, y: py };
-          let carve = true;
-          for (const cut of maskCuts) {
-            if (px < cut.minX - band || px > cut.maxX + band || py < cut.minY - band || py > cut.maxY + band) continue;
-            if (pointInPolygon(p, cut.loop) || distanceToPolygonSegments(p, cut.closed) <= band) {
-              carve = false;
-              break;
-            }
-          }
-          if (carve) cavityMask[r * cols + c] = 1;
-        }
-      }
-
-      const minLoopArea = Math.pow(pitch * 2, 2);
-      const cavityLoops = traceMaskLoops(cavityMask, cols, rows)
-        .map(loop => loop.map(p => ({ x: p.x * pitch, y: p.y * pitch })))
-        .map(loop => {
-          const closed = loop.concat([{ ...loop[0] }]);
-          const resampled = resampleClosed(closed, pitch * 0.7);
-          const smoothed = gaussianSmooth(resampled, pitch * 0.9, pitch * 0.7);
-          return simplifyClosedLoop(smoothed.slice(0, -1), 0.08);
-        })
-        .filter(loop => loop.length >= 3 && Math.abs(signedArea2(loop)) / 2 > minLoopArea)
-        .map(loop => (signedArea2(loop) > 0 ? loop : loop.slice().reverse()))
-        .map(loop => densifyLoop(loop, loopStep));
-
-      let outer = Array.isArray(settings.outline) && settings.outline.length >= 4
-        ? settings.outline.map(p => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }))
-        : [{ x: 0, y: 0 }, { x: drawer.w, y: 0 }, { x: drawer.w, y: drawer.h }, { x: 0, y: drawer.h }];
-      if (signedArea2(outer) < 0) outer.reverse();
-      const rectLoop = densifyLoop(outer, Math.min(faceMeshSize, Math.max(1.2, band * 1.8)));
-      const nodes = [
-        { loop: rectLoop, kind: "rect", floorZ: 0, area: Math.abs(signedArea2(rectLoop)) / 2, children: [], depth: 0 },
-        ...cuts.map(cut => ({ loop: cut.loop, kind: "cut", floorZ: cut.floorZ, area: Math.abs(signedArea2(cut.loop)) / 2, children: [], depth: -1 })),
-        ...cavityLoops.map(loop => ({ loop, kind: "cavity", floorZ: skin, area: Math.abs(signedArea2(loop)) / 2, children: [], depth: -1 }))
-      ];
-      nodes.slice(1).forEach(node => {
-        let parent = nodes[0];
-        for (const other of nodes) {
-          if (other === node || other === nodes[0]) continue;
-          if (other.area <= node.area || other.area >= parent.area) continue;
-          if (pointInPolygon(node.loop[0], other.loop)) parent = other;
-        }
-        parent.children.push(node);
-      });
-      const queue = [nodes[0]];
-      while (queue.length) {
-        const n = queue.shift();
-        n.children.forEach(ch => {
-          ch.depth = n.depth + 1;
-          queue.push(ch);
-        });
-      }
-
-      let triangles = [];
-      const pocketFloors = [];
-      const pushFace = (tris, z, flip) => {
-        tris.forEach(([a, b, c]) => {
-          const A = { x: a.x, y: a.y, z }, B = { x: b.x, y: b.y, z }, C = { x: c.x, y: c.y, z };
-          triangles.push(flip ? [A, C, B] : [A, B, C]);
-        });
-      };
-      const addWalls = (loop, z0, z1, materialInside) => {
-        if (z1 - z0 < 0.05) return;
-        for (let i = 0; i < loop.length; i++) {
-          const a = loop[i], b = loop[(i + 1) % loop.length];
-          if (materialInside) {
-            addStlQuad(triangles, { x: a.x, y: a.y, z: z0 }, { x: b.x, y: b.y, z: z0 }, { x: b.x, y: b.y, z: z1 }, { x: a.x, y: a.y, z: z1 });
-          } else {
-            addStlQuad(triangles, { x: b.x, y: b.y, z: z0 }, { x: a.x, y: a.y, z: z0 }, { x: a.x, y: a.y, z: z1 }, { x: b.x, y: b.y, z: z1 });
-          }
-        }
-      };
-      const meshFace = (outer, holes) => {
-        return triangulatePolygonWithHoles(outer, holes);
-      };
-
-      const labelLoops = (settings.labelLoops || []).filter(loop => loop && loop.length >= 3).map(loop => {
-        const copy = loop.map(p => ({ x: p.x, y: p.y }));
-        return signedArea2(copy) < 0 ? copy.reverse() : copy;
-      });
-      let labelHost = null;
-      nodes.forEach(node => {
-        if (node.kind !== "cavity" || node.depth % 2 !== 1) return;
-        if (!labelHost || node.area > labelHost.area) labelHost = node;
-      });
-      const emboss = [];
-      const loopFits = (loop, host) => loop.every(p => pointInPolygon(p, host.loop) && !host.children.some(ch => pointInPolygon(p, ch.loop)));
-      if (labelHost && labelLoops.length) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        labelLoops.forEach(loop => loop.forEach(p => {
-          minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-          minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-        }));
-        let hx0 = Infinity, hy0 = Infinity, hx1 = -Infinity, hy1 = -Infinity;
-        labelHost.loop.forEach(p => {
-          hx0 = Math.min(hx0, p.x); hy0 = Math.min(hy0, p.y);
-          hx1 = Math.max(hx1, p.x); hy1 = Math.max(hy1, p.y);
-        });
-        const lw = maxX - minX, lh = maxY - minY;
-        const shifts = [{ x: 0, y: 0 }];
-        for (let y = hy0 + 3; y <= hy1 - lh - 3; y += 8) {
-          for (let x = hx0 + 3; x <= hx1 - lw - 3; x += 8) shifts.push({ x: x - minX, y: y - minY });
-        }
-        for (const shift of shifts) {
-          const moved = labelLoops.map(loop => loop.map(p => ({ x: p.x + shift.x, y: p.y + shift.y })));
-          if (moved.every(loop => loopFits(loop, labelHost))) {
-            moved.forEach(loop => emboss.push(loop));
-            break;
-          }
-        }
-        if (emboss.length) labelHost.emboss = emboss;
-      }
-
-      function offsetInset(loop, dist) {
-        const lines = loop.map((a, i) => {
-          const b = loop[(i + 1) % loop.length];
-          const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-          const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
-          return { p: { x: a.x + nx * dist, y: a.y + ny * dist }, dir: { x: (b.x - a.x) / len, y: (b.y - a.y) / len } };
-        });
-        return lines.map((line, i) => {
-          const prev = lines[(i + lines.length - 1) % lines.length];
-          const cross = prev.dir.x * line.dir.y - prev.dir.y * line.dir.x;
-          const dx = line.p.x - prev.p.x, dy = line.p.y - prev.p.y;
-          const t = Math.abs(cross) < 1e-6 ? 0 : (dx * line.dir.y - dy * line.dir.x) / cross;
-          const hit = { x: prev.p.x + prev.dir.x * t, y: prev.p.y + prev.dir.y * t };
-          const spike = Math.hypot(hit.x - line.p.x, hit.y - line.p.y);
-          if (spike > dist * 4) return { x: line.p.x, y: line.p.y };
-          return hit;
-        });
-      }
-
-      // Solid skin on the bed. A small chamfer keeps the first layer from squishing outward.
-      if (chamfer >= 0.05) {
-        const inset = offsetInset(rectLoop, chamfer);
-        pushFace(meshFace(inset, []), 0, true);
-        for (let i = 0; i < rectLoop.length; i++) {
-          const a0 = inset[i], b0 = inset[(i + 1) % inset.length];
-          const a1 = rectLoop[i], b1 = rectLoop[(i + 1) % rectLoop.length];
-          addStlQuad(triangles,
-            { x: a0.x, y: a0.y, z: 0 },
-            { x: b0.x, y: b0.y, z: 0 },
-            { x: b1.x, y: b1.y, z: chamfer },
-            { x: a1.x, y: a1.y, z: chamfer }
-          );
-        }
-        addWalls(rectLoop, chamfer, thickness, true);
-      } else {
-        pushFace(meshFace(rectLoop, []), 0, true);
-        addWalls(rectLoop, 0, thickness, true);
-      }
-      nodes.forEach(node => {
-        const holes = node.children.map(ch => ch.loop).concat(node.emboss || []);
-        if (node.depth % 2 === 0) {
-          pushFace(meshFace(node.loop, holes), thickness, false);
-        } else {
-          const floor = (node.emboss || []).length
-            ? triangulatePolygonWithHoles(node.loop, holes)
-            : meshFace(node.loop, holes);
-          const start = triangles.length;
-          pushFace(floor, node.floorZ, false);
-          if(node.kind === "cut") pocketFloors.push({loop:node.loop,holes:holes.map(h=>areaCentroid(h)),start,end:triangles.length});
-          addWalls(node.loop, node.floorZ, thickness, false);
-          (node.emboss || []).forEach(loop => {
-            pushFace(triangulatePolygonWithHoles(loop, []), node.floorZ + 0.6, false);
-            addWalls(loop, node.floorZ, node.floorZ + 0.6, true);
-          });
-        }
-      });
-      // Material islands (even depth, not the outer rectangle) need a wall down to the
-      // surrounding void floor. The search above is awkward; do it explicitly.
-      nodes.forEach(node => {
-        if (node.kind === "rect" || node.depth % 2 !== 0) return;
-        const parent = nodes.find(n => n.children.includes(node));
-        const z0 = parent ? parent.floorZ : skin;
-        addWalls(node.loop, z0, thickness, true);
-      });
-
-      const mm3 = meshVolumeMm3(triangles);
-
-      const name = String(settings.name || "snapinset");
-      // Convert canvas Y-down to the same Y-up frame used by DXF, once.
-      const cadTriangles=triangles.map(t=>[t[0],t[2],t[1]].map(p=>({x:p.x,y:drawer.h-p.y,z:p.z})));
-      const kept=[0];cadTriangles.forEach(t=>kept.push(kept[kept.length-1]+(facetNormal(...t)?1:0)));
-      const orientation=checkPocketOrientation(makeBinaryStl(cadTriangles,name),pocketFloors.map(f=>({...f,start:kept[f.start],end:kept[f.end]})),drawer);
-      const content=makeBinaryStl(conformMesh(readStlTriangles(makeBinaryStl(cadTriangles,name))),name+"_shell");
-      const manifold=meshAudit(content);
-      if(!manifold.passed)throw Error(name+' is not a single manifold body: '+JSON.stringify(manifold));
-      const estimate=printEstimator.estimatePrintedMesh(content,settings.profile);
-      const grams=estimate.grams;
-      const labelDropped=!!(settings.labelLoops||[]).length&&!emboss.length;
+      const shell = shellGeometry.build(cutEntities, drawer, settings);
+      // The bed-facing top is already Z=0. Reflect only canvas Y to match DXF.
+      const cadTriangles = shell.triangles.map(t => [t[0],t[2],t[1]].map(p => ({x:p.x,y:drawer.h-p.y,z:p.z})));
+      const name = settings.name || "snapinset";
+      const content = makeBinaryStl(conformMesh(readStlTriangles(makeBinaryStl(cadTriangles,name))),name);
+      const manifold = meshAudit(content);
+      if (!manifold.passed) throw Error(name + " is not one manifold body: " + JSON.stringify(manifold));
+      const orientation = checkTopOpenings(content,shell.outline,shell.voids,drawer,name);
+      const estimate = printEstimator.estimatePrintedMesh(content,settings.profile);
       return {
-        content,
-        cells: cellCount,
-        facets: (content.byteLength - 84) / 50,
-        pitch,
-        adaptedPitch: Math.abs(pitch - requestedPitch) > 0.01,
-        thickness,
-        wall: skin,
-        volume: mm3,
-        grams,
-        labeled: emboss.length, labelDropped, manifold, orientation, estimate
+        content, manifold, estimate, grams:estimate.grams, volume:manifold.volume,
+        orientation,
+        labeled:shell.labeled, labelDropped:shell.labelDropped
       };
+    }
+
+    function exportOpening(item, tool, settings) {
+      const points = tool.points.map(p => transformPoint(p,item,tool));
+      if (!settings.notches) return points;
+      const placed = itemPulls(item);
+      const pulls = placed.length ? placed : defaultFingerPulls(tool.points,tool.width,tool.height,settings.notchRadius);
+      const anchors = pulls.map(p => transformPoint({x:p.anchorX,y:p.anchorY},item,tool));
+      return shellGeometry.opening(points,anchors,settings.notchRadius);
+    }
+
+    function printPocketDepth(item, tool, settings) {
+      const measured = Number(item.printToolThickness);
+      if (measured > 0) return measured + settings.depthAllowance;
+      const previous = Number(item.pocketDepth || tool.pocketDepth);
+      if (previous > 0 && previous !== 15) return previous;
+      return settings.defaultToolThickness + settings.depthAllowance;
+    }
+
+    function printCutEntities(settings = printSettings()) {
+      return state.items.map((item, idx) => {
+        const tool = getTool(item.toolId);
+        const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0,40);
+        return {layer, depth:printPocketDepth(item,tool,settings), points:exportOpening(item,tool,settings)};
+      });
     }
 
     function buildLayoutExportData() {
@@ -5056,16 +4913,7 @@ function conformMesh(tris) {
       if (!report.ready) {
         return { error: "Export blocked: fix the red/yellow checklist items before drawer DXF export.", report };
       }
-      const ents = [];
-      state.items.forEach((item, idx) => {
-        const tool = getTool(item.toolId);
-        const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0, 40);
-        ents.push({
-          layer,
-          points: combinedLocalPoints(item).map(p => transformPoint(p, item, tool)),
-          depth: Number(item.pocketDepth || tool.pocketDepth) || 15
-        });
-      });
+      const ents = printCutEntities();
       const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
       const dxfEnts = ents.map(ent => ({
         layer: ent.layer,
@@ -5215,10 +5063,12 @@ function conformMesh(tris) {
         ecEarcutLinked, ecGetLeftmost, ecSectorContainsSector, ecFindHoleBridge, ecEliminateHole, ecLinkedList,
         triangulatePolygonWithHoles, densifyLoop, delaunayFaceMesh, refineFaceTriangulation, traceMaskLoops,
         readStlTriangles, meshAudit, areaCentroid, checkPocketOrientation, conformMesh,
-        meshVolumeMm3, makePrintableShellStl
+        meshVolumeMm3, checkTopOpenings, makePrintableShellStl
       ];
       const src = [
         "("+installEarcut.toString()+")();",
+        "("+installClipper.toString()+")();",
+        "const shellGeometry=("+createInvertedShellGeometry.toString()+")();",
         "const printEstimator=("+createPrintEstimator.toString()+")();",
         "const SEGMENTS = " + JSON.stringify(SEGMENTS) + ";",
         "let ecNodeSeq = 0;",
@@ -5610,7 +5460,7 @@ function conformMesh(tris) {
     }
 
     async function clearanceCoupon(clearance) {
-      const settings = { thickness: 8, wall: 2, rim: 12, pitch: 1.5, chamfer: 0.3, name: "coupon" };
+      const settings = { thickness: 8, wall: 2, ribs: false, name: "coupon" };
       const keyOutline = [];
       appendSeam(keyOutline, { x: 0, y: 0 }, { x: 32, y: 0 }, [], "key", "x", -1, clearance);
       appendSeam(keyOutline, { x: 32, y: 0 }, { x: 32, y: 22 }, [11], "key", "y", 1, clearance);
@@ -5623,9 +5473,9 @@ function conformMesh(tris) {
       appendSeam(socketOutline, { x: 32, y: 22 }, { x: 0, y: 22 }, [], "socket", "x", 1, clearance);
       appendSeam(socketOutline, { x: 0, y: 22 }, { x: 0, y: 0 }, [11], "socket", "y", -1, clearance);
       if (Math.hypot(socketOutline[0].x - socketOutline[socketOutline.length - 1].x, socketOutline[0].y - socketOutline[socketOutline.length - 1].y) < 1e-6) socketOutline.pop();
-      const key = await buildShellStl([], { w: 32, h: 22 }, { ...settings, outline: keyOutline });
-      const socket = await buildShellStl([], { w: 32, h: 22 }, { ...settings, outline: socketOutline });
-      return concatStl([key.content, translateStl(socket.content, 48, 0)], "clearance_coupon");
+      const key = await buildShellStl([], { w: 32, h: 22 }, { ...settings, outline: keyOutline, keyPads: [[30,4,41,18]] });
+      const socket = await buildShellStl([], { w: 32, h: 22 }, { ...settings, outline: socketOutline, keyPads: [[-9,4,10,18]] });
+      return [{label:"coupon-key",content:key.content},{label:"coupon-socket",content:socket.content}];
     }
 
     function describeTiles(limits) {
@@ -5705,16 +5555,83 @@ function conformMesh(tris) {
       const values={};for(const key of Object.keys(printEstimator.defaults))values[key]=document.getElementById('print-'+key)?.value;
       return printEstimator.normalize(values);
     }
-    function printSettings() {return {thickness:Number(el.stlThicknessInput.value),wall:Number(el.stlWallInput.value),pitch:Number(el.stlResolutionInput.value),chamfer:.3,profile:printProfile()};}
+    const shellFields = {
+      plate:["shell-plate",2.5], pocketWall:["shell-pocketWall",1.6], floor:["shell-floor",1.6],
+      ribWidth:["shell-ribWidth",1.2], ribSpacing:["shell-ribSpacing",80], notchRadius:["shell-notchRadius",12],
+      floorBevel:["shell-floorBevel",.8], defaultToolThickness:["shell-defaultThickness",14], depthAllowance:["shell-depthAllowance",1],
+      ribs:["shell-ribs",true], notches:["shell-notches",true]
+    };
+    function shellOptions(saved) {
+      const options = {};
+      for (const [name,[id,defaultValue]] of Object.entries(shellFields)) {
+        const input = document.getElementById(id);
+        const toggle = typeof defaultValue === "boolean";
+        if (saved) {
+          if (toggle) input.checked = saved[name] ?? defaultValue;
+          else input.value = saved[name] ?? defaultValue;
+        }
+        options[name] = toggle ? input.checked : input.value && input.validity.valid ? Number(input.value) : defaultValue;
+      }
+      return options;
+    }
+    function printSettings() {
+      return {thickness:Number(el.stlThicknessInput.value),wall:Math.max(.8,Number(el.stlWallInput.value)||2),...shellOptions(),profile:printProfile()};
+    }
+    function renderPrintCalipers() {
+      const list = document.getElementById("shell-calipers");
+      const ids = state.items.map(item=>item.id+":"+getTool(item.toolId)?.name).join("|");
+      if (list.dataset.items === ids) return;
+      list.dataset.items = ids;
+      list.replaceChildren();
+      for (const item of state.items) {
+        const label = document.createElement("label");
+        label.textContent = getTool(item.toolId).name + " thickness (mm)";
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = ".1";
+        input.step = ".1";
+        input.placeholder = "Use existing depth";
+        input.value = item.printToolThickness ?? "";
+        input.addEventListener("change", () => {
+          const current = state.items.find(candidate=>candidate.id===item.id);
+          if (!current || !input.reportValidity()) return;
+          current.printToolThickness = Number(input.value) || null;
+          renderAll();
+        });
+        label.append(input);
+        list.append(label);
+      }
+    }
     function planTileExport(data) {
+      const settings = printSettings();
       const limits=bedLimits(),clearance=keyClearanceMm();
       if(limits.maxW<=30||limits.maxH<=30)throw Error('Printer bed is too small for the tile keys.');
       const polys=data.ents.map(ent=>openLoop(ent.points)),xCuts=planCuts(data.drawer.w,limits.maxW,pos=>crossingLength(polys,'x',pos)),yCuts=planCuts(data.drawer.h,limits.maxH,pos=>crossingLength(polys,'y',pos));
-      const xs=[0,...xCuts,data.drawer.w],ys=[0,...yCuts,data.drawer.h],jobs=[],pad=.2;
+      const xs=[0,...xCuts,data.drawer.w],ys=[0,...yCuts,data.drawer.h],jobs=[],pad=settings.wall;
       for(let row=0;row<ys.length-1;row++)for(let col=0;col<xs.length-1;col++) {
         const x0=xs[col],x1=xs[col+1],y0=ys[row],y1=ys[row+1],w=x1-x0,h=y1-y0,label=tileLabel(col,row),cuts=[];
-        for(const ent of data.ents){const ring=openLoop(ent.points).map(p=>[p.x,p.y]);const pieces=polygonClipping.intersection([ring],[[[x0+pad,y0+pad],[x1-pad,y0+pad],[x1-pad,y1-pad],[x0+pad,y1-pad],[x0+pad,y0+pad]]]);
-          for(const piece of pieces){const loop=piece[0].slice(0,-1).map(p=>({x:p[0]-x0,y:p[1]-y0}));if(loop.length>=3&&Math.abs(signedArea2(loop))/2>=1)cuts.push({points:loop,depth:ent.depth});}}
+        const tileRect = inset => [[[
+          [x0+inset,y0+inset],[x1-inset,y0+inset],[x1-inset,y1-inset],
+          [x0+inset,y1-inset],[x0+inset,y0+inset]
+        ]]];
+        if (2*pad >= Math.min(w,h)) throw Error("Tile "+label+" is too narrow for its perimeter wall.");
+        const coverage = {original:0, retained:0};
+        const ringArea = ring => Math.abs(signedArea2(ring.map(([x,y])=>({x,y})))) / 2;
+        for (const ent of data.ents) {
+          const ring = [openLoop(ent.points).map(p=>[p.x,p.y])];
+          const original = polygonClipping.intersection(ring,tileRect(0));
+          coverage.original += original.reduce((sum,p)=>sum+ringArea(p[0]),0);
+          const pieces = polygonClipping.intersection(ring,tileRect(pad));
+          for (const [border] of pieces) {
+            const area = ringArea(border);
+            if (area < 1) continue;
+            coverage.retained += area;
+            cuts.push({points:border.slice(0,-1).map(([x,y])=>({x:x-x0,y:y-y0})),depth:ent.depth});
+          }
+        }
+        if (coverage.retained < coverage.original*.95) {
+          throw Error("Tile "+label+" loses more than 5% of its DXF opening area at the seams. Reduce the perimeter setting or move tools away from the seam.");
+        }
         const right=col<xs.length-2?keyCenters(y0,y1,blockedOnSeam(polys,'x',x1,y0,y1)).map(v=>v-y0):[];
         const top=row<ys.length-2?keyCenters(x0,x1,blockedOnSeam(polys,'y',y1,x0,x1)).map(v=>v-x0):[];
         const left=col>0?keyCenters(y0,y1,blockedOnSeam(polys,'x',x0,y0,y1)).map(v=>v-y0):[];
@@ -5726,7 +5643,10 @@ function conformMesh(tris) {
         appendSeam(outline,{x:0,y:h},{x:0,y:0},left,'socket','y',-1,clearance);outline.pop();
         if(outlineSelfCrosses(outline))throw Error('Tile '+label+' has a crossing key outline.');const bounds=loopBounds(outline);
         if(bounds.w>limits.usableW+.3||bounds.h>limits.usableH+.3)throw Error('Tile '+label+' exceeds the usable printer bed.');
-        jobs.push({label,cuts,drawer:{w,h},origin:{x:x0,y:data.drawer.h-y1},bounds,settings:{...printSettings(),rim:SEAM_RIM,outline,labelLoops:labelLoopsFor(label,SEAM_RIM+4,SEAM_RIM+4),name:'tile_'+label}});
+        jobs.push({label,cuts,drawer:{w,h},origin:{x:x0,y:data.drawer.h-y1},bounds,settings:{...settings,outline,ribOrigin:{x:x0,y:y0},keyPads:[
+          ...right.map(y=>[w-2,y-7,w+9,y+7]), ...left.map(y=>[-9,y-7,KEY_DEPTH+2,y+7]),
+          ...top.map(x=>[x-7,h-2,x+7,h+9]), ...bottom.map(x=>[x-7,-9,x+7,KEY_DEPTH+2])
+        ],labelLoops:labelLoopsFor(label,SEAM_RIM+4,SEAM_RIM+4),name:'tile_'+label}});
       }
       return {jobs,limits,clearance};
     }
@@ -5753,15 +5673,17 @@ function conformMesh(tris) {
       const model=state.printModels;
       if(!model){el.massReadout.textContent='Estimate preparing…';target.textContent=state.printEstimateError||'Preparing one shared material and time estimate…';return;}
       el.massReadout.textContent=printEstimator.format(model.whole);
-      target.innerHTML='<div><b>Whole board:</b> '+printEstimator.format(model.whole)+'</div><div><b>'+model.jobs.length+' tiles:</b> '+(model.tileError?'Unavailable: '+escapeHtml(model.tileError):printEstimator.format(model.tiles))+' (coupon excluded)</div><small>'+escapeHtml(printEstimator.describe(model.profile))+'</small><p>Rough estimate, not a slicer result. Allow ±20% material / ±35% time.</p>'+(Math.max(model.whole.hours,model.tiles?.hours||0)>12?'<p class="print-warning" role="status">Long print: more than 12 hours. Check your slicer and print the clearance coupon first.</p>':'');
+      target.innerHTML='<div><b>Whole board:</b> '+printEstimator.format(model.whole)+'</div><div><b>'+model.jobs.length+' tiles:</b> '+(model.tileError?'Unavailable: '+escapeHtml(model.tileError):printEstimator.format(model.tiles))+' (coupon excluded)</div><small>'+escapeHtml(printEstimator.describe(model.profile))+'</small><p>Time estimates use effective flow. Use your slicer for travel and bridge timing.</p>'+(Math.max(model.whole.hours,model.tiles?.hours||0)>12?'<p class="print-warning" role="status">Long print: more than 12 hours. Check your slicer and print the clearance coupon first.</p>':'');
     }
     function schedulePrintEstimates(report) {
       if(state.view!=='export')return;
+      renderPrintCalipers();
       clearTimeout(schedulePrintEstimates.timer);
       if(!report.ready){state.printRequestedKey=null;state.printModels=null;el.massReadout.textContent='Fix layout to estimate';return;}
-      const data={drawer:{w:Number(el.drawerW.value),h:Number(el.drawerH.value)},ents:state.items.map((item,i)=>({layer:'CUT_'+i,points:combinedLocalPoints(item).map(p=>transformPoint(p,item)),depth:Number(item.pocketDepth||getTool(item.toolId).pocketDepth)||15}))};
-      // Layer names do not affect material; use the same export data key as actions.
-      data.ents.forEach((ent,i)=>{const tool=getTool(state.items[i].toolId);ent.layer=('CUT_'+(i+1)+'_'+tool.name).replace(/[^A-Za-z0-9_]/g,'_').slice(0,40);});
+      const data = {
+        drawer:{w:Number(el.drawerW.value),h:Number(el.drawerH.value)},
+        ents:printCutEntities()
+      };
       const key=printModelKey(data);
       if(state.printModels?.key===key){renderPrintEstimates();return;}
       state.printRequestedKey=key;state.printModels=null;renderPrintEstimates();
@@ -5787,10 +5709,18 @@ function conformMesh(tris) {
           diagnostics.push({label,origin:job.origin,size:job.drawer,cuts:job.cuts,manifold:audit,orientation:stl.orientation,labeled:stl.labeled,estimate:stl.estimate});
           notes.push(label+': CAD origin '+job.origin.x.toFixed(3)+', '+job.origin.y.toFixed(3)+' mm; '+job.bounds.w.toFixed(1)+' × '+job.bounds.h.toFixed(1)+' mm; '+printEstimator.format(stl.estimate)+'; manifold PASS; label '+(stl.labelDropped?'SKIPPED':stl.labeled));
         }
-        const coupon=await clearanceCoupon(model.clearance),couponCheck=meshAudit(coupon,2);if(!couponCheck.passed)throw Error('Coupon failed manifold check.');
-        const couponEstimate=printEstimator.estimatePrintedMesh(coupon,model.profile);diagnostics.push({label:'coupon',manifold:couponCheck,estimate:couponEstimate});files.push({name:'clearance-coupon.stl',data:coupon});
+        const couponEstimates = [];
+        for (const coupon of await clearanceCoupon(model.clearance)) {
+          const audit = meshAudit(coupon.content);
+          if (!audit.passed) throw Error(coupon.label+" failed manifold check.");
+          const estimate = printEstimator.estimatePrintedMesh(coupon.content,model.profile);
+          couponEstimates.push(estimate);
+          diagnostics.push({label:coupon.label,manifold:audit,estimate});
+          files.push({name:"clearance-"+coupon.label+".stl",data:coupon.content});
+        }
+        const couponEstimate = printEstimator.total(couponEstimates,model.profile);
         state.exportDiagnostics={...state.exportDiagnostics,tiles:diagnostics,warnings};
-        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Estimates are approximate; use matching slicer settings. Allow ±20% material / ±35% time.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','STL and DXF use X-right, Y-up, Z-up. Place tiles at the CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon contains two intentionally separate watertight mating bodies. Print and test it first.','Each tile is one manifold body. Labels are raised 0.6 mm on cavity floors.',...notes,...warnings].join('\n');
+        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Time estimates use effective flow. Use your slicer for travel and bridge timing.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','STL and DXF use X-right, Y-up, Z-up. Place tiles at the CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon parts are separate single-body STL files. Print and test the mating pair first.','Each tile is one manifold body. Labels are raised 0.6 mm on the underside of the top plate.',...notes,...warnings].join('\n');
         files.push({name:'tiles.txt',data:new TextEncoder().encode(text)});files.push({name:'validation.json',data:new TextEncoder().encode(JSON.stringify(state.exportDiagnostics,null,2))});
         download(safeFileBase(cleanProjectName())+'_tiles.zip',zipStore(files),'application/zip');renderPrintEstimates();
         showNotice('Exported '+model.jobs.length+' verified tiles + coupon. '+printEstimator.format(model.tiles)+'. '+(model.tiles.hours>12?'Long print: over 12 hours. ':'')+warnings.join(' '),warnings.length||model.tiles.hours>12?'warn':'success');
@@ -6310,6 +6240,9 @@ function conformMesh(tris) {
       drawLayout();
     });
 
+    for (const [id] of Object.values(shellFields)) {
+      document.getElementById(id).addEventListener("change",renderAll);
+    }
     [el.offsetInput, el.spacingInput, el.smoothInput, el.metalRepairInput, el.fingerInput, el.arrangeSpacingInput, el.arrangeTimeInput, el.stlThicknessInput, el.stlWallInput, el.stlResolutionInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();

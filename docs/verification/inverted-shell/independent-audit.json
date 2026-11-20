@@ -1,0 +1,180 @@
+{
+  "board": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.9999857788726495,
+    "volume_mm3": 576669.1191136567,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        500.0,
+        350.0,
+        18.0
+      ]
+    ]
+  },
+  "A1": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.9868289029545644,
+    "volume_mm3": 95877.85174361728,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        188.0,
+        150.0,
+        18.0
+      ]
+    ]
+  },
+  "B1": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.9659631601625324,
+    "volume_mm3": 91217.9301382226,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        168.0,
+        150.0,
+        18.0
+      ]
+    ]
+  },
+  "C1": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.9576352407718642,
+    "volume_mm3": 84518.62251673639,
+    "bounds": [
+      [
+        0.0,
+        -8.0,
+        0.0
+      ],
+      [
+        144.0,
+        150.0,
+        18.0
+      ]
+    ]
+  },
+  "A2": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.9879873754646545,
+    "volume_mm3": 139837.000283569,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        188.0,
+        200.0,
+        18.0
+      ]
+    ]
+  },
+  "B2": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.967109136733658,
+    "volume_mm3": 127183.4765747001,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        176.0,
+        200.0,
+        18.0
+      ]
+    ]
+  },
+  "C2": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "iou": 0.9847511660686734,
+    "volume_mm3": 111930.67135755537,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        144.0,
+        200.0,
+        18.0
+      ]
+    ]
+  },
+  "clearance-coupon-key.stl": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "volume_mm3": 3500.0,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        40.0,
+        22.0,
+        8.0
+      ]
+    ]
+  },
+  "clearance-coupon-socket.stl": {
+    "self_intersecting_faces": 0,
+    "watertight": true,
+    "is_volume": true,
+    "bodies": 1,
+    "volume_mm3": 2858.137736979958,
+    "bounds": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        32.0,
+        22.0,
+        8.0
+      ]
+    ]
+  }
+}
