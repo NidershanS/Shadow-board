@@ -29,6 +29,16 @@ function createInvertedShellGeometry() {
     offsetter.Execute(out, delta * units);
     return C.Clipper.CleanPolygons(out, .018 * units).filter(p => p.length >= 3);
   }
+  function roundOpening(points, clearance) {
+    if (clearance===0) return points;
+    const offsetter = new C.ClipperOffset(2, .006*units);
+    offsetter.AddPath(path(points),C.JoinType.jtRound,C.EndType.etClosedPolygon);
+    const rings = new C.Paths();
+    offsetter.Execute(rings, clearance*units);
+    if (rings.length!==1) throw Error("Round clearance did not produce one outline.");
+    const ring = rings[0].map(mm);
+    return [...ring,ring[0]];
+  }
   function dimensions(settings, ent = {}) {
     const height = Number(settings.thickness) || 18;
     const plate = Number(settings.plate) || 2.5;
@@ -36,13 +46,13 @@ function createInvertedShellGeometry() {
     return {height, plate, depth};
   }
   function opening(points, anchors, radius) {
-    const circles = anchors.map(center => path(Array.from({length:48}, (_,i) => {
-      const theta = i * Math.PI / 24;
+    const circles = anchors.map(center => path(Array.from({length:120}, (_,i) => {
+      const theta = i * Math.PI / 60;
       return {x:center.x + radius*Math.cos(theta), y:center.y + radius*Math.sin(theta)};
     })));
     const polygons = boolean(C.ClipType.ctUnion,[path(points), ...circles]);
     if (polygons.length !== 1) return points;
-    const ring = C.Clipper.CleanPolygon(polygons[0][0], .025 * units).map(mm);
+    const ring = C.Clipper.CleanPolygon(polygons[0][0], .006 * units).map(mm);
     return [...ring, ring[0]];
   }
 
@@ -53,7 +63,7 @@ function createInvertedShellGeometry() {
     const wall = Number(settings.wall) || 2;
     const rim = minus(outline,offset(outline,-wall));
     const pockets = entities.map(ent => {
-      const loop = C.Clipper.CleanPolygon(path(ent.points), .015 * units);
+      const loop = C.Clipper.CleanPolygon(path(ent.points), .0015 * units);
       const enlarged = offset([loop],Number(settings.pocketWall) || 1.6);
       const supported = intersect(enlarged,outline);
       return {loop, supported, depth: dimensions(settings,ent).depth};
@@ -138,5 +148,5 @@ function createInvertedShellGeometry() {
     }
     return {triangles, outline, voids, labeled: labels.length, labelDropped: originalLabels.length>0 && !labels.length};
   }
-  return {build, dimensions, opening, boolean, path, area, minus, intersect, union, mm};
+  return {build, dimensions, opening, roundOpening, boolean, path, area, minus, intersect, union, mm};
 }

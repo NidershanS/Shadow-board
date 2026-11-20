@@ -370,7 +370,6 @@
                     <label>Pocket wall mm<input id="shell-pocketWall" type="number" value="1.6" min=".5" max="8" step=".1"></label>
                     <label>Default tool thickness mm<input id="shell-defaultThickness" type="number" value="14" min="1" max="80" step=".1"></label>
                     <label>Depth allowance mm<input id="shell-depthAllowance" type="number" value="1" min="0" max="8" step=".1"></label>
-                    <label>Notch radius mm<input id="shell-notchRadius" type="number" value="12" min="1" max="40" step=".5"></label>
                     <label>Rib thickness mm<input id="shell-ribWidth" type="number" value="1.2" min=".5" max="8" step=".1"></label>
                     <label>Rib spacing mm<input id="shell-ribSpacing" type="number" value="80" min="10" max="300" step="1"></label>
                   </div>
@@ -535,8 +534,8 @@
               <label>Gap repair mm<input id="metalRepairInput" type="number" value="7" min="0" step="0.5"></label>
             </div>
             <div class="grid2">
-              <label>Smooth mm<input id="smoothInput" type="number" value="3.5" min="0" step="0.25"></label>
-              <label>Point spacing mm<input id="spacingInput" type="number" value="2.5" min="0.5" step="0.25"></label>
+              <label>Smooth mm<input id="smoothInput" type="number" value="0.9" min="0.8" max="1" step="0.05"></label>
+              <label>Point spacing mm<input id="spacingInput" type="number" value="0.5" min="0.2" max="0.5" step="0.05"></label>
             </div>
             <label>Finger pull radius mm<input id="fingerInput" type="number" value="14" min="0" step="0.5"></label>
             <p class="note" style="text-align:left">These apply the next time a contour is detected. Changing them here reprocesses the tool you are reviewing.</p>
@@ -571,6 +570,7 @@
       <ol id="exportToolNames" aria-label="Tools in the preview"></ol>
       <div class="modalTools">
         <button id="downloadSvg" class="btn" type="button">Download SVG</button>
+        <button id="downloadPolyline" class="btn" type="button">DXF (polylines)</button>
         <button id="confirmExport" class="btn primary" type="button">Download DXF</button>
       </div>
     </div>
@@ -628,7 +628,7 @@
       ender3: { w: 220, h: 220 },
       custom: null
     };
-    const KEY_NECK = 8, KEY_HEAD = 12, KEY_DEPTH = 8, SEAM_RIM = 10, TILE_CAP = 200;
+    const KEY_NECK = 8, KEY_HEAD = 12, KEY_DEPTH = 8, SEAM_RIM = 10;
     const DRAWER_PRESETS = {
       custom: null,
       gridfinity: { w: 168, h: 126, label: "Gridfinity 4×3 (168 × 126 mm)" },
@@ -992,6 +992,8 @@
           id: tool.id,
           name: tool.name,
           points: tool.points,
+          pocketPoints: tool.pocketPoints || null,
+          cutControls: tool.cutControls || null,
           width: tool.width,
           height: tool.height,
           accepted: !!tool.accepted,
@@ -1040,8 +1042,8 @@
       el.drawerH.value = settings.drawerH || 390;
       el.offsetInput.value = settings.offset ?? 2;
       el.metalRepairInput.value = settings.metalRepair ?? 7;
-      el.smoothInput.value = settings.smooth ?? 3.5;
-      el.spacingInput.value = settings.spacing ?? 2.5;
+      el.smoothInput.value = settings.smooth >= .8 && settings.smooth <= 1 ? settings.smooth : .9;
+      el.spacingInput.value = settings.spacing >= .2 && settings.spacing <= .5 ? settings.spacing : .5;
       el.arrangeSpacingInput.value = settings.arrangeSpacing ?? 10;
       el.arrangeTimeInput.value = settings.arrangeTime ?? 8;
       el.fingerInput.value = settings.finger ?? 14;
@@ -1061,6 +1063,8 @@
         id: String(tool.id),
         name: String(tool.name || "Tool"),
         points: Array.isArray(tool.points) ? tool.points : [],
+        pocketPoints: Array.isArray(tool.pocketPoints) ? tool.pocketPoints : (Array.isArray(tool.points) ? tool.points : []),
+        cutControls: Array.isArray(tool.cutControls) ? tool.cutControls : null,
         width: Number(tool.width) || 0,
         height: Number(tool.height) || 0,
         accepted: !!tool.accepted,
@@ -1084,6 +1088,7 @@
         } : null
       })).filter(tool => tool.points.length > 2);
       for (const tool of state.tools) {
+        defaultToolCurve(tool);
         if (!tool.preview) tool.preview = samplePreview(tool);
         if (!tool.previewLarge) tool.previewLarge = tool.preview;
       }
@@ -2341,7 +2346,7 @@
         perimeter += len;
         return { p, q, len };
       });
-      const count = Math.max(16, Math.round(perimeter / Math.max(1, spacingPx)));
+      const count = Math.max(16, Math.round(perimeter / Math.max(.05, spacingPx)));
       const out = [];
       let ei = 0, start = 0;
       for (let k = 0; k < count; k++) {
@@ -2408,25 +2413,28 @@
     }
 
     function smoothDetectionContour(points, spacingMm, sigmaMm) {
-      // Bound smoothing displacement to 0.2 mm; keep the original corner at
-      // sharp tips rather than rounding it away. Spacing is also capped.
-      const spacingPx = Math.max(.1, Math.min(.3, spacingMm)) * PROC_PX_PER_MM;
-      const resampled = resampleClosed(points, spacingPx);
-      const smoothed = gaussianSmooth(resampled, Math.min(.35, Math.max(0,sigmaMm)) * PROC_PX_PER_MM, spacingPx);
-      const out = resampled.map((p,i) => dist(p,smoothed[i]) > .2 * PROC_PX_PER_MM ? p : smoothed[i]);
-      out[out.length-1] = {...out[0]};
-      return out;
+      const spacingPx = Math.max(.2,Math.min(.5,spacingMm || .5))*PROC_PX_PER_MM;
+      const sigmaPx = Math.max(.8,Math.min(1,sigmaMm || .9))*PROC_PX_PER_MM;
+      const samples = resampleClosed(points,spacingPx);
+      const smooth = gaussianSmooth(samples,sigmaPx,spacingPx);
+      return samples.map((point,i) => {
+        const target = smooth[i];
+        // Use a strict fidelity budget within the allowed 0.3 mm so narrow
+        // tool outlines retain their measured nominal area.
+        const d = Math.min(1,.035*PROC_PX_PER_MM/(dist(point,target) || 1));
+        return {x:point.x+d*(target.x-point.x),y:point.y+d*(target.y-point.y)};
+      });
     }
 
-    function combinedContourKey(item) {
-      const pulls = itemPulls(item).map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.r.toFixed(2)}`).join(";");
-      return [
-        item.toolId,
-        pulls,
-        Number(el.offsetInput.value).toFixed(2),
-        Number(el.spacingInput.value).toFixed(2),
-        Number(el.smoothInput.value).toFixed(2)
-      ].join("|");
+    function makeRoundPocket(nominalMm, clearance) {
+      const outline = shellGeometry.roundOpening(nominalMm,clearance);
+      const curve = fitCutCurve(outline);
+      const b = bboxPoints(curve.points);
+      const toLocal = p => ({x:p.x-b.x0,y:p.y-b.y0});
+      return {
+        points:curve.points.map(toLocal), cutControls:curve.controls.map(toLocal),
+        width:b.x1-b.x0,height:b.y1-b.y0,origin:{x:b.x0,y:b.y0}
+      };
     }
 
     function invalidateContourCache(item = null) {
@@ -2434,64 +2442,39 @@
       items.forEach(i => { i._combinedContour = null; });
     }
 
-    function combinedLocalPoints(item) {
-      const cacheKey = combinedContourKey(item);
-      if (item._combinedContour && item._combinedContour.key === cacheKey) {
-        return item._combinedContour.points;
+    function cutForPulls(tool, pulls, cache) {
+      const base = tool.pocketPoints || tool.points;
+      const radius = document.getElementById("shell-notches").checked ? Math.max(0,Number(el.fingerInput.value)||0) : 0;
+      const anchors = radius ? pulls.map(p=>({x:p.anchorX ?? p.x,y:p.anchorY ?? p.y})) : [];
+      const key = radius+"|"+anchors.map(p=>p.x+","+p.y).join(";");
+      if (cache?.base===base && cache.key===key) return cache;
+      let curve;
+      if (anchors.length) {
+        curve = fitCutCurve(shellGeometry.opening(base,anchors,radius),3.25,.76);
+      } else if (tool.cutControls?.length >= 4) {
+        curve = {...createCutCurve(tool.cutControls,.012),points:base};
+      } else {
+        curve = fitCutCurve(base);
       }
-      const tool = getTool(item.toolId);
-      const pulls = itemPulls(item);
-      if (!pulls.length) return tool.points;
-      const all = tool.points.slice();
-      pulls.forEach(p => {
-        all.push({ x: p.x - p.r, y: p.y - p.r }, { x: p.x + p.r, y: p.y + p.r });
-      });
-      const b = bboxPoints(all);
-      const pad = Math.max(6, Number(el.offsetInput.value) + Math.max(0, ...pulls.map(p => p.r * 0.1)));
-      const x0 = b.x0 - pad;
-      const y0 = b.y0 - pad;
-      const w = Math.max(16, Math.ceil((b.x1 - b.x0 + pad * 2) * PROC_PX_PER_MM));
-      const h = Math.max(16, Math.ceil((b.y1 - b.y0 + pad * 2) * PROC_PX_PER_MM));
-      const mask = new Uint8Array(w * h);
-
-      // Scanline fill of the tool polygon (even-odd rule), then stamp pull circles.
-      const poly = tool.points;
-      for (let py = 0; py < h; py++) {
-        const y = y0 + (py + 0.5) / PROC_PX_PER_MM;
-        const xs = [];
-        for (let i = 0; i < poly.length - 1; i++) {
-          const a = poly[i], b = poly[i + 1];
-          if ((a.y > y) === (b.y > y)) continue;
-          xs.push(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x));
-        }
-        xs.sort((p, q) => p - q);
-        for (let k = 0; k + 1 < xs.length; k += 2) {
-          const px0 = Math.max(0, Math.ceil((xs[k] - x0) * PROC_PX_PER_MM - 0.5));
-          const px1 = Math.min(w - 1, Math.floor((xs[k + 1] - x0) * PROC_PX_PER_MM - 0.5));
-          for (let px = px0; px <= px1; px++) mask[py * w + px] = 1;
-        }
-      }
-      for (const pull of pulls) {
-        const cxp = (pull.x - x0) * PROC_PX_PER_MM - 0.5;
-        const cyp = (pull.y - y0) * PROC_PX_PER_MM - 0.5;
-        const rp = pull.r * PROC_PX_PER_MM;
-        const r2 = rp * rp;
-        for (let py = Math.max(0, Math.floor(cyp - rp)); py <= Math.min(h - 1, Math.ceil(cyp + rp)); py++) {
-          for (let px = Math.max(0, Math.floor(cxp - rp)); px <= Math.min(w - 1, Math.ceil(cxp + rp)); px++) {
-            const dx = px - cxp, dy = py - cyp;
-            if (dx * dx + dy * dy <= r2) mask[py * w + px] = 1;
-          }
-        }
-      }
-
-      let outline = traceMask(mask, w, h);
-      const maxPullR = Math.max(0, ...pulls.map(p => p.r || 0));
-      const mergeSmooth = Math.max(Number(el.smoothInput.value), Math.min(9, maxPullR * 0.32));
-      outline = smoothContour(outline, Number(el.spacingInput.value), mergeSmooth);
-      const points = outline.map(p => ({ x: x0 + p.x / PROC_PX_PER_MM, y: y0 + p.y / PROC_PX_PER_MM }));
-      item._combinedContour = { key: cacheKey, points };
-      return points;
+      return {base,key,curve};
     }
+
+    function defaultToolCurve(tool) {
+      if (!tool.pocketPoints) tool.pocketPoints = tool.points;
+      const cache = cutForPulls(tool,tool.defaultPulls || [],tool._defaultContour);
+      tool._defaultContour = cache;
+      tool.points = cache.curve.points;
+      return cache.curve;
+    }
+
+    function itemCutCurve(item) {
+      const tool = getTool(item.toolId);
+      defaultToolCurve(tool);
+      item._combinedContour = cutForPulls(tool,itemPulls(item),item._combinedContour || tool._defaultContour);
+      return item._combinedContour.curve;
+    }
+
+    function combinedLocalPoints(item) { return itemCutCurve(item).points; }
 
     function normalizeMm(pointsPx) {
       const pts = pointsPx.map(p => ({ x: p.x / PROC_PX_PER_MM, y: p.y / PROC_PX_PER_MM }));
@@ -2537,40 +2520,33 @@
       const img = await loadImage(file);
       const page = await detectAndRectify(img, manualCorners || null);
       const parts = segmentTools(page.canvas, Number(el.metalRepairInput.value));
-      const offsetPx = Math.max(0, Math.round(Number(el.offsetInput.value) * PROC_PX_PER_MM));
+      const clearance = Math.max(0,Number(el.offsetInput.value) || 0);
       const baseName = String(file.name || "tool").replace(/\.[^.]+$/, "");
       const tools = [];
       for (let k = 0; k < parts.length; k++) {
         const part = parts[k];
-        const cut = offsetPx > 0 ? boxDilate(part.mask, part.w, part.h, offsetPx) : part.mask;
-        let contour;
-        try {
-          contour = traceMask(cut, part.w, part.h);
-        } catch (err) {
-          continue;
-        }
-        if (!contour || contour.length < 8) continue;
-        contour = smoothDetectionContour(contour, Number(el.spacingInput.value), Number(el.smoothInput.value));
-        const norm = normalizeMm(contour);
-        if (norm.width < 2 || norm.height < 2) continue;
-        const nominalContour = offsetPx > 0
-          ? smoothDetectionContour(traceMask(part.mask, part.w, part.h), Number(el.spacingInput.value), Number(el.smoothInput.value))
-          : contour;
+        const raw = traceMask(part.mask,part.w,part.h);
+        if (!raw || raw.length < 8) continue;
+        const nominalContour = smoothDetectionContour(raw,Number(el.spacingInput.value),Number(el.smoothInput.value));
         const nominal = normalizeMm(nominalContour);
+        if (nominal.width < 2 || nominal.height < 2) continue;
+        const {origin:captureOrigin,...norm} = makeRoundPocket(nominal.points,clearance);
+        const nominalBox = bboxPoints(nominalContour);
+        const contour = norm.points.map(p=>({
+          x:nominalBox.x0+(p.x+captureOrigin.x)*PROC_PX_PER_MM,
+          y:nominalBox.y0+(p.y+captureOrigin.y)*PROC_PX_PER_MM
+        }));
         const capture = {
-          points: nominal.points, clearance: offsetPx / PROC_PX_PER_MM, shape: captureShape(nominal.points),
-          kind: "", expectedLength: null, measuredLength: null
-        };
-        const pocketBox = bboxPoints(contour), nominalBox = bboxPoints(nominalContour);
-        const captureOrigin = {
-          x: (pocketBox.x0 - nominalBox.x0) / PROC_PX_PER_MM,
-          y: (pocketBox.y0 - nominalBox.y0) / PROC_PX_PER_MM
+          points:nominal.points,clearance,shape:captureShape(nominal.points),
+          kind:"",expectedLength:null,measuredLength:null
         };
         state.toolSeq = (state.toolSeq || 0) + 1;
         tools.push({
           id: "tool-" + Date.now().toString(36) + "-" + state.toolSeq,
           name: parts.length > 1 ? baseName + " " + (k + 1) : baseName,
           points: norm.points,
+          pocketPoints: norm.points,
+          cutControls: norm.cutControls,
           width: norm.width,
           height: norm.height,
           accepted: false,
@@ -2591,6 +2567,7 @@
       pocketDepth: 15
     });
       }
+      tools.forEach(defaultToolCurve);
       if (!tools.length) {
         const err = new Error("The sheet was found, but no tool outline was detected. Use a darker tool on plain paper, and keep it off the edge.");
         err.noTool = true;
@@ -2645,8 +2622,9 @@
 
     function snapPullToContour(pull, item, target) {
       const tool = getTool(item.toolId);
-      const nearest = closestPointOnContour(target, tool.points);
-      const snapped = pullFromContourPoint(nearest, pull.r, tool.points);
+      const points = tool.pocketPoints || tool.points;
+      const nearest = closestPointOnContour(target, points);
+      const snapped = pullFromContourPoint(nearest, pull.r, points);
       pull.x = snapped.x;
       pull.y = snapped.y;
       pull.anchorX = snapped.anchorX;
@@ -2954,19 +2932,7 @@
       return item.pulls;
     }
 
-    function itemLayoutPoints(item) {
-      const tool = getTool(item.toolId);
-      const pts = tool.points.slice();
-      itemPulls(item).forEach(p => {
-        pts.push(
-          { x: p.x - p.r, y: p.y },
-          { x: p.x + p.r, y: p.y },
-          { x: p.x, y: p.y - p.r },
-          { x: p.x, y: p.y + p.r }
-        );
-      });
-      return pts;
-    }
+    function itemLayoutPoints(item) { return combinedLocalPoints(item); }
 
     function transformedItemBounds(item) {
       const tool = getTool(item.toolId);
@@ -3046,12 +3012,7 @@
 
     function rotatedCollisionPolygons(item, rot) {
       const tool = getTool(item.toolId);
-      const rad = rot * Math.PI / 180;
-      const polygons = [nestingPolygon(tool.points).map(p => rotateLocalPoint(p, tool, rad))];
-      itemPulls(item).forEach(pull => {
-        polygons.push(circlePolygon(rotateLocalPoint(pull, tool, rad), pull.r, 20));
-      });
-      return polygons;
+      return [nestingPolygon(combinedLocalPoints(item)).map(p=>rotateLocalPoint(p,tool,rot*Math.PI/180))];
     }
 
     function shiftedPoints(points, dx, dy) {
@@ -3887,7 +3848,7 @@
         const tool = getTool(item.toolId);
         if (!tool) return;
         const {depth} = shellGeometry.dimensions(settings,{depth:printPocketDepth(item,tool,settings)});
-        const world = fitCutCurve(exportOpening(item,tool,settings)).points;
+        const world = combinedLocalPoints(item).map(p=>transformPoint(p,item,tool));
         if (world.length < 3) return;
         const rim = world.map(p => S(p.x, p.y, thickness));
         const lowerEdge = world.map(p => S(p.x, p.y, thickness - depth));
@@ -3945,7 +3906,11 @@
           ctx.strokeStyle = selected ? "#1B4532" : "#1F2A24";
           ctx.lineWidth = (selected ? 2.6 : 1.5) / state.scale;
         }
-        const path = toolPath(tool);
+        const path = new Path2D();
+        const {spans} = itemCutCurve(item);
+        path.moveTo(spans[0][0].x,spans[0][0].y);
+        for (const [,a,b,c] of spans) path.bezierCurveTo(a.x,a.y,b.x,b.y,c.x,c.y);
+        path.closePath();
         ctx.fill(path);
         ctx.stroke(path);
         const pulls = itemPulls(item);
@@ -3953,11 +3918,7 @@
         ctx.fillStyle = "rgba(251,250,247,0.2)";
         ctx.strokeStyle = selected ? "#1B4532" : "#6F8074";
         ctx.lineWidth = 1.4 / state.scale;
-        for (const pull of pulls) {
-          ctx.beginPath();
-          ctx.arc(pull.x, pull.y, Math.max(2 / state.scale, pull.r), 0, Math.PI * 2);
-          ctx.stroke();
-        }
+
         ctx.setLineDash([]);
         if (selected) {
           ctx.fillStyle = "#FBFAF7";
@@ -3982,23 +3943,8 @@
       el.canvas.setAttribute("aria-label", `Drawer layout, ${Math.round(dw)} by ${Math.round(dh)} millimetres, ${state.items.length} tools`);
     }
 
-    // Tool outlines are static in local coordinates; build the Path2D once
-    // per tool and rebuild only when the points array is replaced (reprocess).
-    function toolPath(tool) {
-      if (!tool._path2d || tool._path2dPoints !== tool.points) {
-        const path = new Path2D();
-        tool.points.forEach((p, i) => {
-          if (i === 0) path.moveTo(p.x, p.y);
-          else path.lineTo(p.x, p.y);
-        });
-        path.closePath();
-        tool._path2d = path;
-        tool._path2dPoints = tool.points;
-      }
-      return tool._path2d;
-    }
-
     function renderAll() {
+      state.tools.forEach(defaultToolCurve);
       updateAllOverlaps();
       renderToolList();
       renderLayoutItems();
@@ -4037,12 +3983,7 @@
     }
 
     function itemWorldPolygons(item) {
-      const tool = getTool(item.toolId);
-      const polys = [nestingPolygon(tool.points).map(p => transformPoint(p, item, tool))];
-      itemPulls(item).forEach(pull => {
-        polys.push(circlePolygon(transformPoint(pull, item, tool), pull.r, 16));
-      });
-      return polys;
+      return [nestingPolygon(combinedLocalPoints(item)).map(p=>transformPoint(p,item))];
     }
 
     function updateDragOverlap(item) {
@@ -4078,7 +4019,7 @@
     function hitTest(world) {
       for (let i = state.items.length - 1; i >= 0; i--) {
         const item = state.items[i], tool = getTool(item.toolId);
-        const pts = tool.points.map(p => transformPoint(p, item, tool));
+        const pts = combinedLocalPoints(item).map(p => transformPoint(p, item, tool));
         if (pointInPolygon(world, pts)) return item;
       }
       return null;
@@ -4147,7 +4088,7 @@
       return lines;
     }
 
-    function makeDxf(entities, drawer = null) {
+    function makeDxf(entities, drawer = null, useSplines = true) {
       const lines = [
         "0", "SECTION", "2", "HEADER",
         "9", "$ACADVER", "1", "AC1015",
@@ -4163,7 +4104,7 @@
         ], "DRAWER"));
       }
       for (const ent of entities) {
-        lines.push(...(ent.controls ? dxfSpline(ent.controls,ent.layer) : dxfPolyline(ent.points,ent.layer)));
+        lines.push(...(useSplines && ent.controls ? dxfSpline(ent.controls,ent.layer) : dxfPolyline(ent.points,ent.layer)));
       }
       lines.push("0", "ENDSEC", "0", "EOF", "");
       return lines.join("\n");
@@ -4863,7 +4804,7 @@ function conformMesh(tris) {
         if (signedArea2(loop)>0) ring.reverse();
         materialOnBed.push(ring);
       }
-      const reflect = ring => shellGeometry.path(ring.map(shellGeometry.mm).map(p => ({x:p.x,y:drawer.h-p.y})));
+      const reflect = ring => shellGeometry.path(ring.map(shellGeometry.mm).map(p => ({x:drawer.w-p.x,y:drawer.h-p.y})));
       const outer = outline.map(reflect);
       const actual = shellGeometry.minus(outer,materialOnBed);
       const expected = voids.map(reflect);
@@ -4874,7 +4815,7 @@ function conformMesh(tris) {
         const outlineArea = shellGeometry.area([loop]);
         return shellGeometry.area(shellGeometry.intersect([loop],actual)) / outlineArea;
       });
-      if (iou < .95 || pockets.some(overlap => overlap < .95)) {
+      if (iou < .999 || pockets.some(overlap => overlap < .999)) {
         throw Error(name + " top openings do not match the DXF frame (IoU " + iou.toFixed(4) + ").");
       }
       return {passed:true, iou, checked:pockets.length, pockets};
@@ -4882,8 +4823,9 @@ function conformMesh(tris) {
 
     function makePrintableShellStl(cutEntities, drawer, settings) {
       const shell = shellGeometry.build(cutEntities, drawer, settings);
-      // The bed-facing top is already Z=0. Reflect only canvas Y to match DXF.
-      const cadTriangles = shell.triangles.map(t => [t[0],t[2],t[1]].map(p => ({x:p.x,y:drawer.h-p.y,z:p.z})));
+      // Canvas Y becomes DXF Y. Reflect X in print coordinates so a flip
+      // about Y gives the intended installed DXF outline and keeps the winding.
+      const cadTriangles = shell.triangles.map(t => t.map(p => ({x:drawer.w-p.x,y:drawer.h-p.y,z:p.z})));
       const name = settings.name || "snapinset";
       const content = makeBinaryStl(conformMesh(readStlTriangles(makeBinaryStl(cadTriangles,name))),name);
       const manifold = meshAudit(content);
@@ -4897,15 +4839,6 @@ function conformMesh(tris) {
       };
     }
 
-    function exportOpening(item, tool, settings, mapPoint = p => transformPoint(p,item,tool)) {
-      const points = tool.points.map(mapPoint);
-      if (!settings.notches) return points;
-      const placed = itemPulls(item);
-      const pulls = placed.length ? placed : defaultFingerPulls(tool.points,tool.width,tool.height,settings.notchRadius);
-      const anchors = pulls.map(p => mapPoint({x:p.anchorX,y:p.anchorY}));
-      return shellGeometry.opening(points,anchors,settings.notchRadius);
-    }
-
     function printPocketDepth(item, tool, settings) {
       const measured = Number(item.printToolThickness);
       if (measured > 0) return measured + settings.depthAllowance;
@@ -4914,15 +4847,19 @@ function conformMesh(tris) {
       return settings.defaultToolThickness + settings.depthAllowance;
     }
 
-    function fitCutCurve(outline) {
-      return createCutCurve(resampleClosed(outline,2).slice(0,-1));
+    function fitCutCurve(outline, smoothingMm = .20, spacingMm = .5) {
+      const samples = resampleClosed(outline,spacingMm);
+      const controls = gaussianSmooth(samples,smoothingMm,spacingMm);
+      return createCutCurve(controls.slice(0,-1),.012);
     }
 
     function printCutEntities(settings = printSettings()) {
       return state.items.map((item, idx) => {
         const tool = getTool(item.toolId);
         const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0,40);
-        const curve = fitCutCurve(exportOpening(item,tool,settings));
+        const local = itemCutCurve(item);
+        const world = p => transformPoint(p,item,tool);
+        const curve = {points:local.points.map(world),controls:local.controls.map(world),spans:local.spans.map(span=>span.map(world))};
         return {layer,depth:printPocketDepth(item,tool,settings),...curve};
       });
     }
@@ -4941,12 +4878,14 @@ function conformMesh(tris) {
       const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
       const dxfEnts = ents.map(ent => ({
         layer: ent.layer,
-        controls: ent.controls.map(p => ({ x: p.x, y: drawer.h - p.y }))
+        controls: ent.controls.map(p => ({ x: p.x, y: drawer.h - p.y })),
+        points: ent.points.map(p => ({x:p.x,y:drawer.h-p.y}))
       }));
       const dxf = makeDxf(dxfEnts, drawer);
       const svg = makeSvg(ents, drawer);
       return {
         dxf,
+        polylineDxf:makeDxf(dxfEnts,drawer,false),
         svg,
         ents,
         drawer,
@@ -4969,6 +4908,7 @@ function conformMesh(tris) {
 
     function showExportPreview(data) {
       state.pendingLayoutDxf = data.dxf;
+      state.pendingPolylineDxf = data.polylineDxf;
       state.pendingLayoutSvg = data.svg;
       state.pendingLayoutName = data.name;
       const spacing = Number.isFinite(data.report.minGap) ? `${data.report.minGap.toFixed(1)} mm min gap` : "Spacing not measured";
@@ -4989,6 +4929,7 @@ function conformMesh(tris) {
     function hideExportPreview() {
       el.exportModal.classList.add("hidden");
       state.pendingLayoutDxf = null;
+      state.pendingPolylineDxf = null;
       state.pendingLayoutSvg = null;
       state.pendingLayoutName = null;
     }
@@ -5135,8 +5076,8 @@ function conformMesh(tris) {
       const usableH = bedH - margin * 2;
       return {
         bedW, bedH, margin, usableW, usableH,
-        maxW: Math.min(TILE_CAP, usableW - KEY_DEPTH),
-        maxH: Math.min(TILE_CAP, usableH - KEY_DEPTH)
+        maxW: usableW - KEY_DEPTH,
+        maxH: usableH - KEY_DEPTH
       };
     }
 
@@ -5582,7 +5523,7 @@ function conformMesh(tris) {
     }
     const shellFields = {
       plate:["shell-plate",2.5], pocketWall:["shell-pocketWall",1.6],
-      ribWidth:["shell-ribWidth",1.2], ribSpacing:["shell-ribSpacing",80], notchRadius:["shell-notchRadius",12],
+      ribWidth:["shell-ribWidth",1.2], ribSpacing:["shell-ribSpacing",80],
       defaultToolThickness:["shell-defaultThickness",14], depthAllowance:["shell-depthAllowance",1],
       ribs:["shell-ribs",true], notches:["shell-notches",true]
     };
@@ -5627,40 +5568,63 @@ function conformMesh(tris) {
         list.append(label);
       }
     }
+    function clearTileCuts(length, limit, blocked) {
+      if (length <= limit) return [];
+      const positions = [0];
+      // Include centres of narrow real gaps as well as regular positions.
+      const merged = mergeSpans(blocked.map(([a,b])=>[Math.max(0,a),Math.min(length,b)]));
+      let previous = 0;
+      for (const [a,b] of [...merged,[length,length]]) {
+        if (a>previous) positions.push((a+previous)/2);
+        previous = Math.max(previous,b);
+      }
+      for (let x=1;x<length;x++) {
+        if (!merged.some(([a,b])=>x>=a&&x<=b)) positions.push(x);
+      }
+      positions.push(length);
+      const candidates = [...new Set(positions)].sort((a,b)=>a-b);
+      const scores = [{count:0,cost:0,prev:-1}];
+      const preferred = length/Math.ceil(length/limit);
+      for (let i=1;i<candidates.length;i++) {
+        for (let j=i-1;j>=0;j--) {
+          const span = candidates[i]-candidates[j];
+          if (span>limit) break;
+          if (span<30 || !scores[j]) continue;
+          const next = {count:scores[j].count+1,cost:scores[j].cost+(span-preferred)**2,prev:j};
+          if (!scores[i] || next.count<scores[i].count || next.count===scores[i].count&&next.cost<scores[i].cost) scores[i]=next;
+        }
+      }
+      const last = candidates.length-1;
+      if (!scores[last]) throw Error("No straight seams fit this bed without crossing a tool opening. Leave a clear corridor between tools or choose a larger bed.");
+      const cuts = [];
+      for (let i=scores[last].prev;i>0;i=scores[i].prev) cuts.unshift(candidates[i]);
+      return cuts;
+    }
+
     function planTileExport(data) {
       const settings = printSettings();
       const limits=bedLimits(),clearance=keyClearanceMm();
       if(limits.maxW<=30||limits.maxH<=30)throw Error('Printer bed is too small for the tile keys.');
-      const polys=data.ents.map(ent=>openLoop(ent.points)),xCuts=planCuts(data.drawer.w,limits.maxW,pos=>crossingLength(polys,'x',pos)),yCuts=planCuts(data.drawer.h,limits.maxH,pos=>crossingLength(polys,'y',pos));
-      const xs=[0,...xCuts,data.drawer.w],ys=[0,...yCuts,data.drawer.h],jobs=[],pad=settings.wall;
+      const boundsByCut = data.ents.map(ent=>({ent,box:bboxPoints(ent.points)}));
+      const seamGap = Math.max(settings.wall,KEY_DEPTH+clearance+2)+.05;
+      const xCuts = clearTileCuts(data.drawer.w,limits.maxW,boundsByCut.map(({box})=>[box.x0-seamGap,box.x1+seamGap]));
+      const yCuts = clearTileCuts(data.drawer.h,limits.maxH,boundsByCut.map(({box})=>[box.y0-seamGap,box.y1+seamGap]));
+      const xs=[0,...xCuts,data.drawer.w],ys=[0,...yCuts,data.drawer.h],jobs=[];
+      let assigned=0;
       for(let row=0;row<ys.length-1;row++)for(let col=0;col<xs.length-1;col++) {
-        const x0=xs[col],x1=xs[col+1],y0=ys[row],y1=ys[row+1],w=x1-x0,h=y1-y0,label=tileLabel(col,row),cuts=[];
-        const tileRect = inset => [[[
-          [x0+inset,y0+inset],[x1-inset,y0+inset],[x1-inset,y1-inset],
-          [x0+inset,y1-inset],[x0+inset,y0+inset]
-        ]]];
-        if (2*pad >= Math.min(w,h)) throw Error("Tile "+label+" is too narrow for its perimeter wall.");
-        const coverage = {original:0, retained:0};
-        const ringArea = ring => Math.abs(signedArea2(ring.map(([x,y])=>({x,y})))) / 2;
-        for (const ent of data.ents) {
-          const ring = [openLoop(ent.points).map(p=>[p.x,p.y])];
-          const original = polygonClipping.intersection(ring,tileRect(0));
-          coverage.original += original.reduce((sum,p)=>sum+ringArea(p[0]),0);
-          const pieces = polygonClipping.intersection(ring,tileRect(pad));
-          for (const [border] of pieces) {
-            const area = ringArea(border);
-            if (area < 1) continue;
-            coverage.retained += area;
-            cuts.push({points:border.slice(0,-1).map(([x,y])=>({x:x-x0,y:y-y0})),depth:ent.depth});
-          }
+        const x0=xs[col],x1=xs[col+1],y0=ys[row],y1=ys[row+1],w=x1-x0,h=y1-y0,label=tileLabel(col,row);
+        const cuts = boundsByCut.filter(({box})=>box.x0>=x0 && box.y0>=y0 && box.x1<=x1 && box.y1<=y1)
+          .map(({ent})=>({points:ent.points.map(p=>({x:p.x-x0,y:p.y-y0})),depth:ent.depth}));
+        assigned += cuts.length;
+        const keys = (start,end,offset,hasNeighbor) => hasNeighbor ? keyCenters(start,end,[]).map(p=>p-offset) : [];
+        const right=keys(y0,y1,y0,col<xs.length-2);
+        const top=keys(x0,x1,x0,row<ys.length-2);
+        const left=keys(y0,y1,y0,col>0);
+        const bottom=keys(x0,x1,x0,row>0);
+        if (col<xs.length-2&&!right.length || row<ys.length-2&&!top.length ||
+            col>0&&!left.length || row>0&&!bottom.length) {
+          throw Error("Tile "+label+" has a seam too short for a dovetail.");
         }
-        if (coverage.retained < coverage.original*.95) {
-          throw Error("Tile "+label+" loses more than 5% of its DXF opening area at the seams. Reduce the perimeter setting or move tools away from the seam.");
-        }
-        const right=col<xs.length-2?keyCenters(y0,y1,blockedOnSeam(polys,'x',x1,y0,y1)).map(v=>v-y0):[];
-        const top=row<ys.length-2?keyCenters(x0,x1,blockedOnSeam(polys,'y',y1,x0,x1)).map(v=>v-x0):[];
-        const left=col>0?keyCenters(y0,y1,blockedOnSeam(polys,'x',x0,y0,y1)).map(v=>v-y0):[];
-        const bottom=row>0?keyCenters(x0,x1,blockedOnSeam(polys,'y',y0,x0,x1)).map(v=>v-x0):[];
         const outline=[];
         appendSeam(outline,{x:0,y:0},{x:w,y:0},bottom,'socket','x',-1,clearance);
         appendSeam(outline,{x:w,y:0},{x:w,y:h},right,'key','y',1,clearance);
@@ -5668,11 +5632,12 @@ function conformMesh(tris) {
         appendSeam(outline,{x:0,y:h},{x:0,y:0},left,'socket','y',-1,clearance);outline.pop();
         if(outlineSelfCrosses(outline))throw Error('Tile '+label+' has a crossing key outline.');const bounds=loopBounds(outline);
         if(bounds.w>limits.usableW+.3||bounds.h>limits.usableH+.3)throw Error('Tile '+label+' exceeds the usable printer bed.');
-        jobs.push({label,cuts,drawer:{w,h},origin:{x:x0,y:data.drawer.h-y1},bounds,settings:{...settings,outline,ribOrigin:{x:x0,y:y0},keyPads:[
+        jobs.push({label,cuts,keys:{right,top,left,bottom},drawer:{w,h},origin:{x:x0,y:data.drawer.h-y1},bounds,settings:{...settings,outline,ribOrigin:{x:x0,y:y0},keyPads:[
           ...right.map(y=>[w-2,y-7,w+9,y+7]), ...left.map(y=>[-9,y-7,KEY_DEPTH+2,y+7]),
           ...top.map(x=>[x-7,h-2,x+7,h+9]), ...bottom.map(x=>[x-7,-9,x+7,KEY_DEPTH+2])
         ],labelLoops:labelLoopsFor(label,SEAM_RIM+4,SEAM_RIM+4),name:'tile_'+label}});
       }
+      if (assigned!==data.ents.length) throw Error("Tile seams do not contain every tool opening intact.");
       return {jobs,limits,clearance};
     }
     function printModelKey(data) {return JSON.stringify([data.ents,data.drawer,printSettings(),bedLimits(),keyClearanceMm()]);}
@@ -5731,7 +5696,7 @@ function conformMesh(tris) {
         for(const job of model.jobs){const {label,stl}=job;const audit=meshAudit(stl.content);if(!audit.passed)throw Error('Tile '+label+' failed the pre-zip manifold check.');
           if(stl.labelDropped)warnings.push('Tile '+label+' label skipped: no safe location.');
           files.push({name:'tile-'+label+'.stl',data:stl.content});
-          diagnostics.push({label,origin:job.origin,size:job.drawer,cuts:job.cuts,manifold:audit,orientation:stl.orientation,labeled:stl.labeled,estimate:stl.estimate});
+          diagnostics.push({label,keys:job.keys,origin:job.origin,size:job.drawer,cuts:job.cuts,manifold:audit,orientation:stl.orientation,labeled:stl.labeled,estimate:stl.estimate});
           notes.push(label+': CAD origin '+job.origin.x.toFixed(3)+', '+job.origin.y.toFixed(3)+' mm; '+job.bounds.w.toFixed(1)+' × '+job.bounds.h.toFixed(1)+' mm; '+printEstimator.format(stl.estimate)+'; manifold PASS; label '+(stl.labelDropped?'SKIPPED':stl.labeled));
         }
         const couponEstimates = [];
@@ -5745,7 +5710,7 @@ function conformMesh(tris) {
         }
         const couponEstimate = printEstimator.total(couponEstimates,model.profile);
         state.exportDiagnostics={...state.exportDiagnostics,tiles:diagnostics,warnings};
-        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Time estimates use effective flow. Use your slicer for motion and travel timing.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','STL and DXF use X-right, Y-up, Z-up. Place tiles at the CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon parts are separate single-body STL files. Print and test the mating pair first.','Each tile is one manifold body. Labels are raised 0.6 mm on the underside of the top plate.',...notes,...warnings].join('\n');
+        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Time estimates use effective flow. Use your slicer for motion and travel timing.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','Flip every printed tile about Y before assembly. Installed CAD X = tile width minus print X. Add the installed CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon parts are separate single-body STL files. Print and test the mating pair first.','Each tile is one manifold body. Labels are raised 0.6 mm on the underside of the top plate.',...notes,...warnings].join('\n');
         files.push({name:'tiles.txt',data:new TextEncoder().encode(text)});files.push({name:'validation.json',data:new TextEncoder().encode(JSON.stringify(state.exportDiagnostics,null,2))});
         download(safeFileBase(cleanProjectName())+'_tiles.zip',zipStore(files),'application/zip');renderPrintEstimates();
         showNotice('Exported '+model.jobs.length+' verified tiles + coupon. '+printEstimator.format(model.tiles)+'. '+(model.tiles.hours>12?'Long print: over 12 hours. ':'')+warnings.join(' '),warnings.length||model.tiles.hours>12?'warn':'success');
@@ -5796,8 +5761,7 @@ function conformMesh(tris) {
         return;
       }
       const tool = getTool(item.toolId);
-      const outline = exportOpening(item,tool,printSettings(),p=>p);
-      const {controls,points} = fitCutCurve(outline);
+      const {controls,points} = itemCutCurve(item);
       const b = bboxPoints(points);
       const ents = [{layer:"CUT",controls:controls.map(p=>({x:p.x-b.x0,y:b.y1-p.y}))}];
       const dxf = makeDxf(ents);
@@ -6272,10 +6236,11 @@ function conformMesh(tris) {
     [el.offsetInput, el.spacingInput, el.smoothInput, el.metalRepairInput, el.fingerInput, el.arrangeSpacingInput, el.arrangeTimeInput, el.stlThicknessInput, el.stlWallInput, el.stlResolutionInput].forEach(input => {
       input.addEventListener("input", () => {
         invalidateContourCache();
+        state.tools.forEach(defaultToolCurve);
         scheduleAutosave();
         state.printModels=null;renderExportReport();
         if (el.boardMeta) el.boardMeta.textContent = `${Number(el.stlThicknessInput.value) || 18} mm board · ${Number(el.stlWallInput.value) || 2} mm wall`;
-        if (state.viewMode === "3d" && state.view === "arrange") drawLayout();
+        if (state.view === "arrange") drawLayout();
       });
     });
     [el.offsetInput, el.metalRepairInput, el.smoothInput, el.spacingInput].forEach(input => {
@@ -6361,6 +6326,11 @@ function conformMesh(tris) {
       updateBusy("Stopping...", "Keeping the best layout found so far.");
     });
 
+    document.getElementById("downloadPolyline").addEventListener("click", () => {
+      if (state.pendingPolylineDxf && state.pendingLayoutName) {
+        download(state.pendingLayoutName.replace(/\.dxf$/,"_polyline.dxf"),state.pendingPolylineDxf);
+      }
+    });
     el.downloadSvg.addEventListener("click", () => {
       if (!state.pendingLayoutSvg || !state.pendingLayoutName) {
         showNotice("No drawer SVG is ready yet. Run export again.");

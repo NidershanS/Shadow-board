@@ -11,7 +11,7 @@ const result=await page.evaluate(()=>{
  if(meshAudit(flipped).passed)throw Error('Bad winding accepted');
  const drawer={w:200,h:160};
  const shell=shellGeometry.build(cut,drawer,{thickness:18,wall:2});
- const mirrored=makeBinaryStl(readStlTriangles(stl.content).map(t=>t.map(p=>({...p,y:drawer.h-p.y}))),'mirrored');
+ const mirrored=makeBinaryStl(readStlTriangles(stl.content).map(t=>t.map(p=>({...p,x:drawer.w-p.x}))),'mirrored');
  let rejected=false;
  try { checkTopOpenings(mirrored,shell.outline,shell.voids,drawer,'mirrored'); }
  catch { rejected=true; }
@@ -28,10 +28,20 @@ const result=await page.evaluate(()=>{
    }).sort((a,b)=>a-b);
  }
  for(const [x,y,expected] of [[35.3,94.2,[]],[100.3,40.2,[0,2.5]],[80.3,35.2,[0,18]],[1.3,35.2,[0,18]],[20.4,94.2,[]]]) {
-   if(JSON.stringify(sampleZ(x,y))!==JSON.stringify(expected))throw Error('Unexpected cross section at '+x+','+y+': '+sampleZ(x,y));
+   if(JSON.stringify(sampleZ(drawer.w-x,y))!==JSON.stringify(expected))throw Error('Unexpected cross section at '+x+','+y+': '+sampleZ(drawer.w-x,y));
  }
  const noRibs=makePrintableShellStl(cut,drawer,{thickness:18,wall:2,ribs:false});
  if(!(noRibs.volume<stl.volume))throw Error('Rib toggle failed');
+ const squareCut=shellGeometry.roundOpening(cut[0].points,2);
+ if(Math.abs(Math.min(...squareCut.map(p=>p.x))-18)>.01 || Math.abs(Math.min(...squareCut.map(p=>p.y))-28)>.01)
+   throw Error('Round clearance has incorrect axial dimensions');
+ if(squareCut.some(p=>p.x<20&&p.y<30&&Math.hypot(p.x-20,p.y-30)>2.01))
+   throw Error('Clearance corner is not round');
+ const pixelOutline=cut[0].points.map(p=>({x:p.x*PROC_PX_PER_MM,y:p.y*PROC_PX_PER_MM}));
+ const resampled=resampleClosed(pixelOutline,.5*PROC_PX_PER_MM);
+ const cleaned=smoothDetectionContour(pixelOutline,.5,.9);
+ if(cleaned.some((p,i)=>dist(p,resampled[i])>.3*PROC_PX_PER_MM+1e-8))
+   throw Error('Nominal smoothing exceeded its displacement budget');
  const opening=shellGeometry.opening(cut[0].points,[{x:20,y:60}],12);
  if(Math.min(...opening.map(p=>p.x))!==8)throw Error('Notch is not centered on the pocket edge');
  if(shellGeometry.dimensions({thickness:18},{depth:30}).depth!==18)throw Error('Wall depth cap failed');
@@ -47,6 +57,16 @@ const result=await page.evaluate(()=>{
      }
    }
  }
+ const split=planTileExport({drawer:{w:440,h:160},ents:cut});
+ if(split.jobs.length!==2 || split.jobs[0].cuts.length!==1 ||
+    !split.jobs[0].keys.right.length || !split.jobs[1].keys.left.length)
+   throw Error('Seam-safe cover or mating key is missing');
+ let crossed=false;
+ try{planTileExport({drawer:{w:440,h:160},ents:[{points:[{x:100,y:10},{x:340,y:10},{x:340,y:40},{x:100,y:40}]}]});}
+ catch{crossed=true;}
+ if(!crossed)throw Error('Zero-clearance seam was permitted');
+ const compat=makeDxf([{layer:'CUT',...curve}],drawer,false);
+ if(!compat.includes('AcDbPolyline') || compat.includes('AcDbSpline'))throw Error('Polyline compatibility format missing');
  const nativeDxf=makeDxf([{layer:'CUT',...curve}],drawer);
  if((nativeDxf.match(/\nSPLINE\n/g)||[]).length!==1)throw Error('Expected one native DXF spline');
  if(!/d="M[^"]+C/.test(makeSvg([curve],drawer)))throw Error('SVG discarded cubic commands');

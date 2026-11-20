@@ -153,40 +153,8 @@ function restoreCaptureMetadata(value) {
 }
 
 function buildCaliperPocket(capture, factor) {
-  const points = capture.points.map(p => ({ x: p.x * factor, y: p.y * factor }));
-  const margin = Math.round(capture.clearance * PROC_PX_PER_MM);
-  if (!margin) {
-    const b = bboxPoints(points);
-    return { points, width: b.x1 - b.x0, height: b.y1 - b.y0, origin: { x: 0, y: 0 } };
-  }
-  // Rebuild the captured square-dilation clearance in millimetres, after scale.
-  const pad = margin + 3;
-  const b = bboxPoints(points);
-  const w = Math.ceil(b.x1 * PROC_PX_PER_MM) + 2 * pad;
-  const h = Math.ceil(b.y1 * PROC_PX_PER_MM) + 2 * pad;
-  if (w * h > 20000000) throw new Error("The corrected contour is too large.");
-  const mask = new Uint8Array(w * h);
-  for (let row = pad; row < h - pad; row++) {
-    const y = (row - pad + .5) / PROC_PX_PER_MM;
-    const edges = [];
-    for (let i = 0; i < points.length; i++) {
-      const a = points[i], b = points[(i + 1) % points.length];
-      if ((a.y > y) === (b.y > y)) continue;
-      edges.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
-    }
-    edges.sort((a, b) => a - b);
-    for (let i = 0; i + 1 < edges.length; i += 2) {
-      const left = Math.ceil(edges[i] * PROC_PX_PER_MM - .5) + pad;
-      const right = Math.floor(edges[i + 1] * PROC_PX_PER_MM - .5) + pad;
-      mask.fill(1, row * w + left, row * w + right + 1);
-    }
-  }
-  const cut = boxDilate(mask, w, h, margin);
-  const traced = traceMask(cut, w, h);
-  if (!traced?.length) throw new Error("The corrected outline is too small.");
-  const smooth = smoothDetectionContour(traced, Number(el.spacingInput.value), Number(el.smoothInput.value));
-  const bounds = bboxPoints(smooth);
-  return { ...normalizeMm(smooth), origin: { x: (bounds.x0 - pad) / PROC_PX_PER_MM, y: (bounds.y0 - pad) / PROC_PX_PER_MM } };
+  const points = capture.points.map(p => ({x:p.x*factor,y:p.y*factor}));
+  return makeRoundPocket(points,capture.clearance);
 }
 
 function setCaliperLength(tool, measured) {
@@ -206,7 +174,8 @@ function setCaliperLength(tool, measured) {
   const items = state.items.filter(item => item.toolId === tool.id);
   const instancePulls = items.map(item => movePulls(itemPulls(item)));
   tool.defaultPulls = movePulls(tool.defaultPulls);
-  Object.assign(tool, norm, { captureOrigin: origin, fitStatus: "" });
+  Object.assign(tool, norm, { pocketPoints:norm.points, captureOrigin: origin, fitStatus: "" });
+  defaultToolCurve(tool);
   capture.measuredLength = measured;
   items.forEach((item, i) => {
     item.pulls = instancePulls[i];
