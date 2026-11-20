@@ -609,6 +609,7 @@
 <script src="print-estimates.js"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="inverted-shell.js"></script>
+<script src="cut-curve.js"></script>
 <script>
     const printEstimator=createPrintEstimator();
     const shellGeometry = createInvertedShellGeometry();
@@ -3886,7 +3887,7 @@
         const tool = getTool(item.toolId);
         if (!tool) return;
         const {depth} = shellGeometry.dimensions(settings,{depth:printPocketDepth(item,tool,settings)});
-        const world = exportOpening(item,tool,settings);
+        const world = fitCutCurve(exportOpening(item,tool,settings)).points;
         if (world.length < 3) return;
         const rim = world.map(p => S(p.x, p.y, thickness));
         const lowerEdge = world.map(p => S(p.x, p.y, thickness - depth));
@@ -4120,16 +4121,36 @@
     }
 
     function dxfPolyline(points, layer) {
-      const lines = ["0", "LWPOLYLINE", "8", layer, "90", String(points.length - 1), "70", "1"];
+      const lines = ["0", "LWPOLYLINE", "100", "AcDbEntity", "8", layer, "100", "AcDbPolyline", "90", String(points.length - 1), "70", "1"];
       for (const p of points.slice(0, -1)) {
         lines.push("10", p.x.toFixed(3), "20", p.y.toFixed(3));
       }
       return lines;
     }
 
+    function dxfSpline(controls, layer) {
+      const controlPoints = [...controls,...controls.slice(0,3)];
+      // Clamp the periodic curve at its seam. This produces the same curve,
+      // with no unused knot spans for DXF readers to extend past the closure.
+      const [first,...rest] = createCutCurve(controls).spans;
+      const last = rest.at(-1);
+      controlPoints[0] = first[0];
+      controlPoints[1] = first[1];
+      controlPoints[controlPoints.length-2] = last[2];
+      controlPoints[controlPoints.length-1] = last[3];
+      const knotCount = controlPoints.length + 4;
+      const lines = ["0","SPLINE","100","AcDbEntity","8",layer,"100","AcDbSpline",
+        "210","0","220","0","230","1","70","9","71","3",
+        "72",String(knotCount),"73",String(controlPoints.length),"74","0"];
+      for (let i=0;i<knotCount;i++) lines.push("40",String(Math.max(0,Math.min(controls.length,i-3))));
+      for (const p of controlPoints) lines.push("10",p.x.toFixed(8),"20",p.y.toFixed(8),"30","0");
+      return lines;
+    }
+
     function makeDxf(entities, drawer = null) {
       const lines = [
         "0", "SECTION", "2", "HEADER",
+        "9", "$ACADVER", "1", "AC1015",
         "9", "$INSUNITS", "70", "4",
         "9", "$MEASUREMENT", "70", "1",
         "0", "ENDSEC",
@@ -4142,7 +4163,7 @@
         ], "DRAWER"));
       }
       for (const ent of entities) {
-        lines.push(...dxfPolyline(ent.points, ent.layer));
+        lines.push(...(ent.controls ? dxfSpline(ent.controls,ent.layer) : dxfPolyline(ent.points,ent.layer)));
       }
       lines.push("0", "ENDSEC", "0", "EOF", "");
       return lines.join("\n");
@@ -4876,12 +4897,12 @@ function conformMesh(tris) {
       };
     }
 
-    function exportOpening(item, tool, settings) {
-      const points = tool.points.map(p => transformPoint(p,item,tool));
+    function exportOpening(item, tool, settings, mapPoint = p => transformPoint(p,item,tool)) {
+      const points = tool.points.map(mapPoint);
       if (!settings.notches) return points;
       const placed = itemPulls(item);
       const pulls = placed.length ? placed : defaultFingerPulls(tool.points,tool.width,tool.height,settings.notchRadius);
-      const anchors = pulls.map(p => transformPoint({x:p.anchorX,y:p.anchorY},item,tool));
+      const anchors = pulls.map(p => mapPoint({x:p.anchorX,y:p.anchorY}));
       return shellGeometry.opening(points,anchors,settings.notchRadius);
     }
 
@@ -4893,11 +4914,16 @@ function conformMesh(tris) {
       return settings.defaultToolThickness + settings.depthAllowance;
     }
 
+    function fitCutCurve(outline) {
+      return createCutCurve(resampleClosed(outline,2).slice(0,-1));
+    }
+
     function printCutEntities(settings = printSettings()) {
       return state.items.map((item, idx) => {
         const tool = getTool(item.toolId);
         const layer = ("CUT_" + (idx + 1) + "_" + tool.name).replace(/[^A-Za-z0-9_]/g, "_").slice(0,40);
-        return {layer, depth:printPocketDepth(item,tool,settings), points:exportOpening(item,tool,settings)};
+        const curve = fitCutCurve(exportOpening(item,tool,settings));
+        return {layer,depth:printPocketDepth(item,tool,settings),...curve};
       });
     }
 
@@ -4915,7 +4941,7 @@ function conformMesh(tris) {
       const drawer = { w: Number(el.drawerW.value), h: Number(el.drawerH.value) };
       const dxfEnts = ents.map(ent => ({
         layer: ent.layer,
-        points: ent.points.map(p => ({ x: p.x, y: drawer.h - p.y }))
+        controls: ent.controls.map(p => ({ x: p.x, y: drawer.h - p.y }))
       }));
       const dxf = makeDxf(dxfEnts, drawer);
       const svg = makeSvg(ents, drawer);
@@ -4930,8 +4956,9 @@ function conformMesh(tris) {
     }
 
     function makeSvg(ents, drawer) {
-      const pathFor = points => points.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join("") + "Z";
-      const body = ents.map(ent => `  <path d="${pathFor(ent.points)}" fill="none" stroke="#000" stroke-width="0.2"/>`).join("\n");
+      const xy = p => p.x.toFixed(8)+" "+p.y.toFixed(8);
+      const pathFor = spans => "M"+xy(spans[0][0]) + spans.map(span=>"C"+span.slice(1).map(xy).join(" ")).join("")+"Z";
+      const body = ents.map(ent => `  <path d="${pathFor(ent.spans)}" fill="none" stroke="#000" stroke-width="0.2"/>`).join("\n");
       return [
         `<svg xmlns="http://www.w3.org/2000/svg" width="${drawer.w}mm" height="${drawer.h}mm" viewBox="0 0 ${drawer.w} ${drawer.h}">`,
         `  <rect x="0" y="0" width="${drawer.w}" height="${drawer.h}" fill="none" stroke="#000" stroke-width="0.2"/>`,
@@ -5769,9 +5796,10 @@ function conformMesh(tris) {
         return;
       }
       const tool = getTool(item.toolId);
-      const pts = combinedLocalPoints(item);
-      const b = bboxPoints(pts);
-      const ents = [{ layer: "CUT", points: pts.map(p => ({ x: p.x - b.x0, y: b.y1 - p.y })) }];
+      const outline = exportOpening(item,tool,printSettings(),p=>p);
+      const {controls,points} = fitCutCurve(outline);
+      const b = bboxPoints(points);
+      const ents = [{layer:"CUT",controls:controls.map(p=>({x:p.x-b.x0,y:b.y1-p.y}))}];
       const dxf = makeDxf(ents);
       download(tool.name.replace(/[^A-Za-z0-9_-]/g, "_") + ".dxf", dxf);
       showNotice(`Success: exported ${tool.name} as one contour DXF.`);

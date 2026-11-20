@@ -35,6 +35,23 @@ const result=await page.evaluate(()=>{
  const opening=shellGeometry.opening(cut[0].points,[{x:20,y:60}],12);
  if(Math.min(...opening.map(p=>p.x))!==8)throw Error('Notch is not centered on the pocket edge');
  if(shellGeometry.dimensions({thickness:18},{depth:30}).depth!==18)throw Error('Wall depth cap failed');
+ const curve=fitCutCurve(cut[0].points);
+ for(let i=0;i<curve.spans.length;i++){
+   const [a,b,c,d]=curve.spans[i];
+   const [e,f,g]=curve.spans[(i+1)%curve.spans.length];
+   for(const axis of ['x','y']){
+     if(Math.abs(d[axis]-e[axis])>1e-9 ||
+        Math.abs(d[axis]-c[axis]-f[axis]+e[axis])>1e-9 ||
+        Math.abs(d[axis]-2*c[axis]+b[axis]-g[axis]+2*f[axis]-e[axis])>1e-9){
+       throw Error('C² continuity failed at the wraparound or a knot');
+     }
+   }
+ }
+ const nativeDxf=makeDxf([{layer:'CUT',...curve}],drawer);
+ if((nativeDxf.match(/\nSPLINE\n/g)||[]).length!==1)throw Error('Expected one native DXF spline');
+ if(!/d="M[^"]+C/.test(makeSvg([curve],drawer)))throw Error('SVG discarded cubic commands');
+ const smoothMesh=makePrintableShellStl([{points:curve.points,depth:15}],drawer,{thickness:18,wall:2});
+ if(!smoothMesh.manifold.passed || smoothMesh.orientation.iou<.999)throw Error('Smooth STL opening differs from the sampled curve');
  const label=makePrintableShellStl([],{w:70,h:50},{thickness:18,wall:2,pitch:2,labelLoops:labelLoopsFor('B1',15,15),name:'B1'});
  if(!label.manifold.passed || label.labelDropped || !label.labeled)throw Error('Label not integrated');
  return {orientation:stl.orientation,manifold:stl.manifold,openMeshBlocked:true,reversedFaceBlocked:true,mirroredPocketBlocked:true,label:{bodies:label.manifold.bodies,labeled:label.labeled}};
