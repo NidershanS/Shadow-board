@@ -1,0 +1,220 @@
+@font-face {
+  font-family: Inter;
+  src: url("fonts/inter-latin.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/jetbrainsmono-latin.woff2") format("woff2");
+  font-weight: 500 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("fonts/spacegrotesk-latin.woff2") format("woff2");
+  font-weight: 500 700;
+  font-display: swap;
+}
+#exportView {
+  display: none;
+}
+body[data-view="export"] #exportView {
+  display: grid;
+  gap: 16px;
+  width: min(1060px, 100%);
+  margin-inline: auto;
+  padding: 22px 16px;
+  align-content: start;
+}
+body[data-view="export"] #arrangeView,
+body[data-view="export"] .side {
+  display: none;
+}
+body[data-view="export"] .body {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: auto;
+}
+body[data-view="export"] .main {
+  display: block;
+}
+.export-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 16px;
+  align-items: start;
+}
+.export-figure {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.export-figure figcaption {
+  color: var(--muted);
+  font-size: 13px;
+}
+.export-figure canvas {
+  width: 100%;
+  background: var(--canvas);
+  border: 1px solid var(--cream-line);
+  border-radius: var(--r-md);
+}
+body[data-view="export"] .export-block {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--cream-line);
+  border-radius: var(--r-md);
+  box-shadow: none;
+  background: var(--cream-raised);
+}
+#exportPreviewCanvas {
+  display: block;
+  width: 100%;
+}
+#exportToolNames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+#pocketDepthReadout {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  pointer-events: none;
+  white-space: normal;
+}
+#previewModal .modalPanel {
+  width: min(800px, 100%);
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#previewModal .modalPanel > .modalTop,
+#previewModal .review-actions {
+  flex: 0 0 auto;
+}
+#previewModal .review-content {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding: 3px 3px 5px;
+}
+#previewModal .modalBody {
+  min-height: 0;
+}
+#previewImage {
+  display: block;
+  max-height: clamp(148px, calc(100dvh - 292px), 600px);
+  width: 100%;
+  object-fit: contain;
+}
+.review-actions {
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cream-line);
+}
+.review-actions .modalTools {
+  justify-content: flex-start;
+}
+.review-actions .modalTools .btn {
+  flex: 1 1 auto;
+  padding-inline: 10px;
+}
+.review-actions .review-secondary .btn {
+  min-height: 34px;
+  font-size: 13px;
+}
+.project-preview-option {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.project-preview-option input {
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .app {
+    height: 100dvh;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  .app > .body {
+    grid-row: 3;
+  }
+  .app > .toast {
+    grid-row: 2;
+    position: static;
+    transform: none;
+    margin: 6px 10px 0;
+    max-width: none;
+  }
+  body[data-view="review"] .app > .toast {
+    position: fixed;
+    top: 6px;
+    bottom: auto;
+    left: 0;
+    right: 0;
+  }
+  .stepper {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .step {
+    justify-content: center;
+    gap: 3px;
+    padding: 4px 2px;
+    font-size: clamp(10px, 3vw, 12px);
+  }
+  .step span {
+    display: inline;
+  }
+  .step i {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+  }
+  body[data-view="arrange"] .body,
+  body[data-view="review"] .body {
+    grid-template-rows: clamp(380px, 57dvh, 640px) auto;
+  }
+  body[data-view="capture"] .body {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .mtop .seg {
+    flex: 1 1 auto;
+    width: auto !important;
+  }
+  .mtop .seg button,
+  .mtop .btn {
+    font-size: 12px;
+    padding-inline: 7px;
+    white-space: nowrap;
+  }
+  .export-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #exportView .export-figure {
+    order: 1;
+  }
+  #previewModal .modalPanel {
+    padding: 12px;
+    gap: 8px;
+  }
+}
+
+/* Keep the photo and form in normal flow inside the scrolling review area. */
+#previewModal .review-content { display: block; }
+#previewModal .review-content > * { display: block; margin-bottom: 12px; }
+#previewModal .review-content > .grid2 { display: grid; }
+#previewModal .modalBody { min-height: auto; }

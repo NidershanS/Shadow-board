@@ -1,0 +1,196 @@
+{
+  "print-before": {
+    "board": [
+      {
+        "pocket": "CUT_1_Chrome_slip_joint_pliers",
+        "centroid_error_mm": 1.2981746037379387,
+        "area_error_fraction": 0.02747819306841207,
+        "pass": false
+      },
+      {
+        "pocket": "CUT_2_Red_black_long_nose_pliers",
+        "centroid_error_mm": 31.279726577125192,
+        "area_error_fraction": 0.6673811964809929,
+        "pass": false
+      },
+      {
+        "pocket": "CUT_3_INGCO_combination_pliers",
+        "centroid_error_mm": 11.530736023159449,
+        "area_error_fraction": 0.5322712569972983,
+        "pass": false
+      },
+      {
+        "pocket": "CUT_4_INGCO_diagonal_cutters",
+        "centroid_error_mm": 6.711918385107913,
+        "area_error_fraction": 0.3114014357177747,
+        "pass": false
+      },
+      {
+        "pocket": "CUT_5_Scissors",
+        "centroid_error_mm": 44.88570689153388,
+        "area_error_fraction": 0.8971421999790096,
+        "pass": false
+      },
+      {
+        "pocket": "CUT_6_Centre_punch",
+        "centroid_error_mm": 41.072682365991675,
+        "area_error_fraction": 0.7325742963443599,
+        "pass": false
+      },
+      {
+        "pocket": "CUT_7_Yellow_long_nose_pliers",
+        "centroid_error_mm": 7.403779925109418,
+        "area_error_fraction": 0.46582019082834797,
+        "pass": false
+      }
+    ]
+  },
+  "print-final": {
+    "board": [
+      {
+        "pocket": "CUT_1_Chrome_slip_joint_pliers",
+        "centroid_error_mm": 0.0017802757478461186,
+        "area_error_fraction": 0.00046310379964413484,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_2_Red_black_long_nose_pliers",
+        "centroid_error_mm": 0.0053804544368598155,
+        "area_error_fraction": 0.0003841509620991511,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_3_INGCO_combination_pliers",
+        "centroid_error_mm": 0.012866745714380184,
+        "area_error_fraction": 0.00012384733715174623,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_4_INGCO_diagonal_cutters",
+        "centroid_error_mm": 0.006366256587831349,
+        "area_error_fraction": 0.0003625020664656223,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_5_Scissors",
+        "centroid_error_mm": 0.004969257825898604,
+        "area_error_fraction": 0.0003962147623349593,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_6_Centre_punch",
+        "centroid_error_mm": 0.003629018377094523,
+        "area_error_fraction": 0.0008280877562020135,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_7_Yellow_long_nose_pliers",
+        "centroid_error_mm": 0.006691147156732563,
+        "area_error_fraction": 9.671304297649227e-05,
+        "pass": true
+      }
+    ],
+    "A1": [
+      {
+        "pocket": "CUT_3_INGCO_combination_pliers",
+        "centroid_error_mm": 0.013458453746124402,
+        "area_error_fraction": 0.0002180526459897333,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_4_INGCO_diagonal_cutters",
+        "centroid_error_mm": 0.012051034254489577,
+        "area_error_fraction": 0.001459817542795483,
+        "pass": true
+      }
+    ],
+    "B1": [
+      {
+        "pocket": "CUT_3_INGCO_combination_pliers",
+        "centroid_error_mm": 0.008629286086616486,
+        "area_error_fraction": 7.876920106766171e-05,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_5_Scissors",
+        "centroid_error_mm": 0.014078728826697506,
+        "area_error_fraction": 0.00022079806187997225,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_7_Yellow_long_nose_pliers",
+        "centroid_error_mm": 0.01795934453809235,
+        "area_error_fraction": 0.00046453498889073396,
+        "pass": true
+      }
+    ],
+    "C1": [
+      {
+        "pocket": "CUT_2_Red_black_long_nose_pliers",
+        "centroid_error_mm": 0.007468469111675253,
+        "area_error_fraction": 0.0017162298049249098,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_5_Scissors",
+        "centroid_error_mm": 0.023398959475559245,
+        "area_error_fraction": 0.0005962007102173426,
+        "pass": true
+      }
+    ],
+    "A2": [
+      {
+        "pocket": "CUT_1_Chrome_slip_joint_pliers",
+        "centroid_error_mm": 0.0015051891819641051,
+        "area_error_fraction": 0.00045846330623326346,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_4_INGCO_diagonal_cutters",
+        "centroid_error_mm": 0.008438663357662784,
+        "area_error_fraction": 0.00028920276464253317,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_6_Centre_punch",
+        "centroid_error_mm": 0.004979971640398847,
+        "area_error_fraction": 0.0006306270596456924,
+        "pass": true
+      }
+    ],
+    "B2": [
+      {
+        "pocket": "CUT_4_INGCO_diagonal_cutters",
+        "centroid_error_mm": 0.0024345233456819263,
+        "area_error_fraction": 0.0020144720624378364,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_6_Centre_punch",
+        "centroid_error_mm": 0.0023785580226316134,
+        "area_error_fraction": 0.0007832745115493865,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_7_Yellow_long_nose_pliers",
+        "centroid_error_mm": 0.00949115872564116,
+        "area_error_fraction": 2.1970742482229153e-05,
+        "pass": true
+      }
+    ],
+    "C2": [
+      {
+        "pocket": "CUT_2_Red_black_long_nose_pliers",
+        "centroid_error_mm": 0.010871888667266582,
+        "area_error_fraction": 0.00013353596721365997,
+        "pass": true
+      },
+      {
+        "pocket": "CUT_7_Yellow_long_nose_pliers",
+        "centroid_error_mm": 0.00341592858803488,
+        "area_error_fraction": 0.0005496937503149886,
+        "pass": true
+      }
+    ]
+  }
+}
