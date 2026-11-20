@@ -1,4 +1,14 @@
-# Inverted shell verification
+# Through-hole follow-up
+
+The current export removes material through the entire tool opening. The tool walls still hang below the 2.5 mm top plate. The drawer bottom supports the tools after the insert is flipped into its installed position.
+
+On the saved 500 × 350 mm layout, an independent scan of the actual STL facets found zero blocking area inside the tool openings on the whole board and all six tiles. Trimesh and PyMeshLab found one watertight volume and zero self-intersecting faces per part. STL-to-DXF opening IoU was 0.999986 for the board and 0.957635–0.987987 for the tiles. The app estimates 489 g for the board and 581 g for six tiles.
+
+[Through-hole mesh audit](verification/through-hole/independent-audit.json)
+
+![Section showing the open underside beneath the tool cutouts](verification/through-hole/section.png)
+
+# Earlier verification with pocket floors
 
 The installed board has a 2.5 mm perforated top, 1.6 mm pocket walls and floors, and a 2 mm full-height perimeter. The open bays are reinforced with 1.2 mm ribs on an 80 mm grid by default. The printable STL puts the top on Z=0 and preserves the DXF XY orientation. Nominal cavity depth is tool thickness plus 1 mm, clamped between the plate thickness and the space available above the floor. The saved test layout uses a nominal 14 mm tool thickness and 15 mm pocket depth. Use the export panel's tool-thickness fields for measured values.
 

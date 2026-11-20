@@ -32,9 +32,8 @@ function createInvertedShellGeometry() {
   function dimensions(settings, ent = {}) {
     const height = Number(settings.thickness) || 18;
     const plate = Number(settings.plate) || 2.5;
-    const floor = Number(settings.floor) || 1.6;
-    const depth = Math.min(height - floor, Math.max(plate, Number(ent.depth) || 15));
-    return {height, plate, floor, depth};
+    const depth = Math.min(height, Math.max(plate, Number(ent.depth) || 15));
+    return {height, plate, depth};
   }
   function opening(points, anchors, radius) {
     const circles = anchors.map(center => path(Array.from({length:48}, (_,i) => {
@@ -48,8 +47,8 @@ function createInvertedShellGeometry() {
   }
 
   function build(entities, drawer, settings) {
-    const {height, plate, floor} = dimensions(settings);
-    if (height <= plate + floor) throw Error("Board height must exceed the plate and floor thicknesses combined.");
+    const {height, plate} = dimensions(settings);
+    if (height <= plate) throw Error("Board height must exceed the top plate thickness.");
     const outline = [path(settings.outline || rectangle(0,0,drawer.w,drawer.h))];
     const wall = Number(settings.wall) || 2;
     const rim = minus(outline,offset(outline,-wall));
@@ -99,7 +98,8 @@ function createInvertedShellGeometry() {
       }
     }
     const labelEnd = Math.min(height,plate+.6);
-    const levels = [...new Set([plate,height,...(labels.length?[labelEnd]:[]),...pockets.map(p=>Math.min(height,p.depth+floor))])].sort((a,b)=>a-b);
+    // Every horizontal section is relieved by the same tool openings.
+    const levels = [...new Set([0,plate,height,...(labels.length?[labelEnd]:[]),...pockets.map(p=>p.depth)])].sort((a,b)=>a-b);
     const triangles = [];
     function face(paths, z, upward) {
       for (const [outer,...holes] of boolean(C.ClipType.ctUnion, paths)) {
@@ -109,58 +109,32 @@ function createInvertedShellGeometry() {
         }
       }
     }
-    function walls(paths, low, high, interior = false) {
+    function walls(paths, low, high) {
       for (const loop of paths) {
         for (let i=0;i<loop.length;i++) {
           const a=mm(loop[i]), b=mm(loop[(i+1)%loop.length]);
-          const quad=[{...a,z:low},{...b,z:low},{...b,z:high},{...a,z:high}];
-          if (interior) quad.reverse();
-          addStlQuad(triangles,...quad);
+          addStlQuad(triangles,{...a,z:low},{...b,z:low},{...b,z:high},{...a,z:high});
         }
       }
     }
-    face(minus(outline,voids),0,false);
-    walls(outline,0,plate);
 
     for (let i=0;i<levels.length;i++) {
       const low=levels[i], high=levels[i+1];
-      const above=high===undefined ? [] : union([
+      const envelope = high===undefined ? [] : low<plate ? outline : union([
         ...skeleton,
-        ...pockets.filter(p=>p.depth+floor>low+1e-7).flatMap(p=>p.supported),
+        ...pockets.filter(p=>p.depth>low).flatMap(p=>p.supported),
         ...(low<labelEnd ? labels : [])
       ]);
-      const ended = low === plate ? outline : union([
-        ...(low === height ? skeleton : []),
-        ...pockets.filter(p=>Math.min(height,p.depth+floor)===low).flatMap(p=>p.supported),
-        ...(low===labelEnd ? labels : [])
-      ]);
-      face(minus(ended,above),low,true);
-      if (high!==undefined) walls(above,low,high);
-
-    }
-
-    for (const pocket of pockets) {
-      const {loop, depth} = pocket;
-      let bevel = Math.min(Number(settings.floorBevel ?? .8),depth/2);
-      let inset = bevel > 0 ? offset([loop],-bevel) : [];
-      while (bevel > .04 && (!inset.length || area(inset) < area([loop]) * .12)) {
-        bevel /= 2;
-        inset = offset([loop],-bevel);
+      if (low===0) face(minus(outline,voids),0,false);
+      else {
+        const ended = low === plate ? outline : union([
+          ...(low===height ? skeleton : []),
+          ...pockets.filter(p=>p.depth===low).flatMap(p=>p.supported),
+          ...(low===labelEnd ? labels : [])
+        ]);
+        face(minus(minus(ended,envelope),voids),low,true);
       }
-      if (!inset.length) bevel = 0;
-      if (!bevel) {
-        walls([loop],0,depth,true);
-        face([loop],depth,false);
-        continue;
-      }
-      walls([loop],0,depth-bevel,true);
-      const outer = loop.map(mm);
-      const holes = inset.filter(C.Clipper.Orientation).map(ring=>ring.map(mm));
-      const inside = new Set(holes.flat());
-      for (const [a,b,c] of triangulatePolygonWithHoles(outer,holes)) {
-        triangles.push([a,c,b].map(p=>({...p,z:inside.has(p)?depth:depth-bevel})));
-      }
-      face(inset,depth,false);
+      if (high!==undefined) walls(minus(envelope,voids),low,high);
     }
     return {triangles, outline, voids, labeled: labels.length, labelDropped: originalLabels.length>0 && !labels.length};
   }

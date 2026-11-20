@@ -368,8 +368,6 @@
                   <div class="grid2">
                     <label>Top plate mm<input id="shell-plate" type="number" value="2.5" min=".5" max="20" step=".1"></label>
                     <label>Pocket wall mm<input id="shell-pocketWall" type="number" value="1.6" min=".5" max="8" step=".1"></label>
-                    <label>Pocket floor mm<input id="shell-floor" type="number" value="1.6" min=".5" max="8" step=".1"></label>
-                    <label>Floor chamfer mm<input id="shell-floorBevel" type="number" value=".8" min="0" max="4" step=".1"></label>
                     <label>Default tool thickness mm<input id="shell-defaultThickness" type="number" value="14" min="1" max="80" step=".1"></label>
                     <label>Depth allowance mm<input id="shell-depthAllowance" type="number" value="1" min="0" max="8" step=".1"></label>
                     <label>Notch radius mm<input id="shell-notchRadius" type="number" value="12" min="1" max="40" step=".5"></label>
@@ -382,7 +380,7 @@
                     <p class="note">Enter measured thickness for each tool. Blank fields use the default tool thickness or a saved custom pocket depth.</p>
                     <div id="shell-calipers" class="grid2"></div>
                   </details>
-                  <p class="note">The perforated top prints against the bed. Pocket floors bridge over the openings.</p>
+                  <p class="note">Print with the top against the bed. Flip the insert into the drawer so the drawer bottom supports the tools.</p>
                   <label>Printer bed
                     <select id="bedPreset">
                       <option value="a1mini">Bambu A1 mini — 180 × 180</option>
@@ -3891,15 +3889,15 @@
         const world = exportOpening(item,tool,settings);
         if (world.length < 3) return;
         const rim = world.map(p => S(p.x, p.y, thickness));
-        const floor = world.map(p => S(p.x, p.y, thickness - depth));
+        const lowerEdge = world.map(p => S(p.x, p.y, thickness - depth));
         const selected = item.id === state.selectedId;
         ctx.save();
         trace(rim);
         ctx.clip();
         ctx.fillStyle = item._overlapping ? "#9E1B4B" : "#725632";
         ctx.fill();
-        trace(floor);
-        ctx.fillStyle = item._overlapping ? "#F3D6DB" : "#CAB183";
+        trace(lowerEdge);
+        ctx.fillStyle = "#FBFAF7";
         ctx.fill();
         ctx.restore();
         trace(rim);
@@ -3907,7 +3905,7 @@
         ctx.lineWidth = selected ? 2.6 : 1.2;
         ctx.stroke();
         if (selected) {
-          depthReadout.textContent = `${tool.name} · ${Number(depth.toFixed(1))} mm pocket depth`;
+          depthReadout.textContent = `${tool.name} · ${Number(depth.toFixed(1))} mm wall drop · through opening`;
           depthReadout.classList.remove("hidden");
         }
       });
@@ -5556,9 +5554,9 @@ function conformMesh(tris) {
       return printEstimator.normalize(values);
     }
     const shellFields = {
-      plate:["shell-plate",2.5], pocketWall:["shell-pocketWall",1.6], floor:["shell-floor",1.6],
+      plate:["shell-plate",2.5], pocketWall:["shell-pocketWall",1.6],
       ribWidth:["shell-ribWidth",1.2], ribSpacing:["shell-ribSpacing",80], notchRadius:["shell-notchRadius",12],
-      floorBevel:["shell-floorBevel",.8], defaultToolThickness:["shell-defaultThickness",14], depthAllowance:["shell-depthAllowance",1],
+      defaultToolThickness:["shell-defaultThickness",14], depthAllowance:["shell-depthAllowance",1],
       ribs:["shell-ribs",true], notches:["shell-notches",true]
     };
     function shellOptions(saved) {
@@ -5673,7 +5671,7 @@ function conformMesh(tris) {
       const model=state.printModels;
       if(!model){el.massReadout.textContent='Estimate preparing…';target.textContent=state.printEstimateError||'Preparing one shared material and time estimate…';return;}
       el.massReadout.textContent=printEstimator.format(model.whole);
-      target.innerHTML='<div><b>Whole board:</b> '+printEstimator.format(model.whole)+'</div><div><b>'+model.jobs.length+' tiles:</b> '+(model.tileError?'Unavailable: '+escapeHtml(model.tileError):printEstimator.format(model.tiles))+' (coupon excluded)</div><small>'+escapeHtml(printEstimator.describe(model.profile))+'</small><p>Time estimates use effective flow. Use your slicer for travel and bridge timing.</p>'+(Math.max(model.whole.hours,model.tiles?.hours||0)>12?'<p class="print-warning" role="status">Long print: more than 12 hours. Check your slicer and print the clearance coupon first.</p>':'');
+      target.innerHTML='<div><b>Whole board:</b> '+printEstimator.format(model.whole)+'</div><div><b>'+model.jobs.length+' tiles:</b> '+(model.tileError?'Unavailable: '+escapeHtml(model.tileError):printEstimator.format(model.tiles))+' (coupon excluded)</div><small>'+escapeHtml(printEstimator.describe(model.profile))+'</small><p>Time estimates use effective flow. Use your slicer for motion and travel timing.</p>'+(Math.max(model.whole.hours,model.tiles?.hours||0)>12?'<p class="print-warning" role="status">Long print: more than 12 hours. Check your slicer and print the clearance coupon first.</p>':'');
     }
     function schedulePrintEstimates(report) {
       if(state.view!=='export')return;
@@ -5720,7 +5718,7 @@ function conformMesh(tris) {
         }
         const couponEstimate = printEstimator.total(couponEstimates,model.profile);
         state.exportDiagnostics={...state.exportDiagnostics,tiles:diagnostics,warnings};
-        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Time estimates use effective flow. Use your slicer for travel and bridge timing.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','STL and DXF use X-right, Y-up, Z-up. Place tiles at the CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon parts are separate single-body STL files. Print and test the mating pair first.','Each tile is one manifold body. Labels are raised 0.6 mm on the underside of the top plate.',...notes,...warnings].join('\n');
+        const text=['SnapInset verified tile set',model.jobs.length+' tiles: '+printEstimator.format(model.tiles)+' (coupon excluded).','Whole board: '+printEstimator.format(model.whole),'Coupon: '+printEstimator.format(couponEstimate),printEstimator.describe(model.profile),'Time estimates use effective flow. Use your slicer for motion and travel timing.',model.tiles.hours>12?'LONG PRINT: over 12 hours.':'','STL and DXF use X-right, Y-up, Z-up. Place tiles at the CAD origins below.','Bed '+model.limits.bedW+' × '+model.limits.bedH+' mm; margin '+model.limits.margin+' mm.','Keys: '+KEY_NECK+' mm neck / '+KEY_HEAD+' mm head / '+KEY_DEPTH+' mm depth; clearance '+model.clearance+' mm per side.','Coupon parts are separate single-body STL files. Print and test the mating pair first.','Each tile is one manifold body. Labels are raised 0.6 mm on the underside of the top plate.',...notes,...warnings].join('\n');
         files.push({name:'tiles.txt',data:new TextEncoder().encode(text)});files.push({name:'validation.json',data:new TextEncoder().encode(JSON.stringify(state.exportDiagnostics,null,2))});
         download(safeFileBase(cleanProjectName())+'_tiles.zip',zipStore(files),'application/zip');renderPrintEstimates();
         showNotice('Exported '+model.jobs.length+' verified tiles + coupon. '+printEstimator.format(model.tiles)+'. '+(model.tiles.hours>12?'Long print: over 12 hours. ':'')+warnings.join(' '),warnings.length||model.tiles.hours>12?'warn':'success');

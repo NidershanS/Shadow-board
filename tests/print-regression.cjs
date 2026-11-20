@@ -27,14 +27,14 @@ const result=await page.evaluate(()=>{
      return [+(a.z+u*(b.z-a.z)+v*(c.z-a.z)).toFixed(4)];
    }).sort((a,b)=>a-b);
  }
- for(const [x,y,expected] of [[35.3,94.2,[15,16.6]],[100.3,40.2,[0,2.5]],[80.3,35.2,[0,18]],[1.3,35.2,[0,18]],[20.4,94.2,[14.6,16.6]]]) {
+ for(const [x,y,expected] of [[35.3,94.2,[]],[100.3,40.2,[0,2.5]],[80.3,35.2,[0,18]],[1.3,35.2,[0,18]],[20.4,94.2,[]]]) {
    if(JSON.stringify(sampleZ(x,y))!==JSON.stringify(expected))throw Error('Unexpected cross section at '+x+','+y+': '+sampleZ(x,y));
  }
  const noRibs=makePrintableShellStl(cut,drawer,{thickness:18,wall:2,ribs:false});
  if(!(noRibs.volume<stl.volume))throw Error('Rib toggle failed');
  const opening=shellGeometry.opening(cut[0].points,[{x:20,y:60}],12);
  if(Math.min(...opening.map(p=>p.x))!==8)throw Error('Notch is not centered on the pocket edge');
- if(shellGeometry.dimensions({thickness:18},{depth:30}).depth!==16.4)throw Error('Floor depth cap failed');
+ if(shellGeometry.dimensions({thickness:18},{depth:30}).depth!==18)throw Error('Wall depth cap failed');
  const label=makePrintableShellStl([],{w:70,h:50},{thickness:18,wall:2,pitch:2,labelLoops:labelLoopsFor('B1',15,15),name:'B1'});
  if(!label.manifold.passed || label.labelDropped || !label.labeled)throw Error('Label not integrated');
  return {orientation:stl.orientation,manifold:stl.manifold,openMeshBlocked:true,reversedFaceBlocked:true,mirroredPocketBlocked:true,label:{bodies:label.manifold.bodies,labeled:label.labeled}};
